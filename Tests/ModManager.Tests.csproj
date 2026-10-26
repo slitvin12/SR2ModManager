@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RollForward>LatestMajor</RollForward>
+    <AssemblyName>ModManager.Tests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\ModCore.cs" Link="ModCore.cs" />
+    <Compile Include="..\Shared\Catalog.cs" Link="Catalog.cs" />
+    <Compile Include="..\Shared\Compat.cs" Link="Compat.cs" />
+    <Compile Include="..\Shared\Backups.cs" Link="Backups.cs" />
+  </ItemGroup>
+</Project>
+
+
+

@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AssemblyName>SR2ModManager</AssemblyName>
+    <RootNamespace>SR2ModManager</RootNamespace>
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
+    <NoWarn>CA1416;CS0618;CS8632</NoWarn>
+  </PropertyGroup>
+  <!-- Сборки MelonLoader и Unity берутся из папки игры (MelonLoader 0.6+, игра запущена хотя бы раз):
+         dotnet build -p:GameDir="E:\Games\Slime Rancher 2"      (build.ps1 передаёт папку сам)
+       или из одной папки со всеми нужными сборками:
+         dotnet build -p:RefsDir="C:\refs\" -->
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Slime Rancher 2</GameDir>
+    <MelonRefs>$(GameDir)\MelonLoader\net6\</MelonRefs>
+    <Il2CppRefs>$(GameDir)\MelonLoader\Il2CppAssemblies\</Il2CppRefs>
+    <MelonRefs Condition="'$(RefsDir)' != ''">$([MSBuild]::EnsureTrailingSlash('$(RefsDir)'))</MelonRefs>
+    <Il2CppRefs Condition="'$(RefsDir)' != ''">$([MSBuild]::EnsureTrailingSlash('$(RefsDir)'))</Il2CppRefs>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\ModCore.cs" Link="ModCore.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="$(MelonRefs)MelonLoader.dll" Private="false" />
+    <Reference Include="$(MelonRefs)Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(Il2CppRefs)Il2Cppmscorlib.dll" Private="false" />
+    <Reference Include="$(Il2CppRefs)UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(Il2CppRefs)UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="$(Il2CppRefs)UnityEngine.TextRenderingModule.dll" Private="false" />
+    <Reference Include="$(Il2CppRefs)UnityEngine.UI.dll" Private="false" />
+    <Reference Include="$(Il2CppRefs)Unity.InputSystem.dll" Private="false" />
+    <Reference Include="$(Il2CppRefs)UnityEngine.ScreenCaptureModule.dll" Private="false" />
+  </ItemGroup>
+  <Target Name="CheckGameRefs" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(MelonRefs)MelonLoader.dll') Or !Exists('$(Il2CppRefs)Il2Cppmscorlib.dll')"
+           Text="Не найдены сборки MelonLoader/Il2Cpp ($(MelonRefs), $(Il2CppRefs)). Укажите папку игры: -p:GameDir=&quot;...\Slime Rancher 2&quot; (нужен MelonLoader 0.6+, игра должна быть запущена с ним хотя бы раз)." />
+  </Target>
+</Project>

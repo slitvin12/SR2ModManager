@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RollForward>LatestMajor</RollForward>
+    <AssemblyName>SR2ModLauncher</AssemblyName>
+    <RootNamespace>SR2ModManager.Launcher</RootNamespace>
+    <Version>1.1.0</Version>
+    <Product>SR2 Mod Manager</Product>
+    <Description>Лаунчер модов Slime Rancher 2</Description>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <ApplicationIcon Condition="Exists('app.ico')">app.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\ModCore.cs" Link="ModCore.cs" />
+    <Compile Include="..\Shared\Catalog.cs" Link="Catalog.cs" />
+    <Compile Include="..\Shared\Compat.cs" Link="Compat.cs" />
+    <Compile Include="..\Shared\Backups.cs" Link="Backups.cs" />
+    <EmbeddedResource Include="app.ico" LogicalName="app.ico" Condition="Exists('app.ico')" />
+  </ItemGroup>
+</Project>
+
+
+

@@ -1,0 +1,7 @@
+bin/
+obj/
+_build/
+.dotnet/
+.vs/
+*.user
+*.suo
