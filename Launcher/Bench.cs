@@ -232,6 +232,15 @@ internal static class Bench
             // ── запуск: конструктор окна → первый полный кадр → фоновая проверка совместимости и значки
             var opt = new RenderOptions();
             benchField?.SetValue(opt, true);
+            // --design compact|fluent|slime — стиль окна для замера (поле есть только в сборках с выбором дизайна)
+            var designF = typeof(RenderOptions).GetField("Design");
+            string? designArg = Arg(args, "--design");
+            if (designF != null && !string.IsNullOrWhiteSpace(designArg))
+            {
+                var et = Nullable.GetUnderlyingType(designF.FieldType) ?? designF.FieldType;
+                if (Enum.TryParse(et, designArg, true, out var dv)) designF.SetValue(opt, dv);
+            }
+            res["design"] = designF?.GetValue(opt)?.ToString() ?? "";
             long t0 = Stopwatch.GetTimestamp();
             var form = new MainForm(store, null, null, opt);
             res["ctorMs"] = R3(Ms(t0));

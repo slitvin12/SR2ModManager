@@ -310,11 +310,24 @@ internal sealed class IconCache : IDisposable
         return (char.ToUpperInvariant(words[0][0]).ToString() + char.ToUpperInvariant(words[^1][0])).ToString();
     }
 
-    private static readonly (Color Bg, Color Fg)[] Palette =
+    // Цвета аватаров — из активной палитры (в тёмном стиле — тёмные подложки со светлыми буквами).
+    private static (Color Bg, Color Fg)[] _palette = Array.Empty<(Color, Color)>();
+    private static int _paletteGen = -1;
+
+    private static (Color Bg, Color Fg)[] Palette
     {
-        (Theme.TealTint, Theme.TealText), (Theme.BlueTint, Theme.BlueText), (Theme.OrangeTint, Theme.OrangeText),
-        (Theme.CoralTint, Theme.CoralText), (Theme.Beige, Theme.NavySoft), (Theme.Hex(0xF6E6F4), Theme.Hex(0x9C3D8E)),
-    };
+        get
+        {
+            if (_paletteGen == Theme.Generation && _palette.Length > 0) return _palette;
+            _paletteGen = Theme.Generation;
+            _palette = new[]
+            {
+                (Theme.TealTint, Theme.TealText), (Theme.BlueTint, Theme.BlueText), (Theme.OrangeTint, Theme.OrangeText),
+                (Theme.CoralTint, Theme.CoralText), (Theme.Beige, Theme.NavySoft), (Theme.PurpleTint, Theme.PurpleText),
+            };
+            return _palette;
+        }
+    }
 
     /// Цвета аватара — по Id, чтобы у мода они не менялись.
     public static (Color Bg, Color Fg) AvatarColors(string id)

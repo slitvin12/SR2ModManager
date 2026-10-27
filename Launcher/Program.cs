@@ -10,6 +10,9 @@
 //                             [--assume-running|--assume-closed] [--width N --height N] [--select id] [--search text] [--toast text] [--drop]
 //                             [--filter 0-4: все, установленные, требуют обновления, отключенные, проблемы]
 //                             [--catalog <папка>: её моды показываются как найденные в «Загрузках»]
+//                             [--design compact|fluent|slime] [--dock problems|hooks|logs|details] [--dock-collapsed]
+//                             [--sort колонка[:asc|:desc]: name, version, author, compat, hooks, update, size] [--picker]
+//                             [--switch-design compact|fluent|slime: после показа сменить стиль на лету]
 //   --bench <json>            (для проверки) замеры: запуск, прокрутка, колесо, переключение мода — окно за экраном,
 //                             на диске ничего не меняется: [--synthetic N: ещё N копий модов в памяти] [--frames N]
 using System;
@@ -27,7 +30,7 @@ namespace SR2ModManager.Launcher;
 internal static class Program
 {
     private static bool _headless;
-    private static readonly string[] Flags = { "--game", "--profile", "--after-exit", "--render", "--width", "--height", "--select", "--filter", "--search", "--toast", "--catalog", "--bench", "--synthetic", "--frames" };
+    private static readonly string[] Flags = { "--game", "--profile", "--after-exit", "--render", "--width", "--height", "--select", "--filter", "--search", "--toast", "--catalog", "--bench", "--synthetic", "--frames", "--design", "--dock", "--sort", "--switch-design" };
 
     [STAThread]
     private static int Main(string[] args)
@@ -127,6 +130,12 @@ internal static class Program
                 Toast = Arg(args, "--toast"),
                 Drop = args.Contains("--drop"),
                 CatalogDir = Arg(args, "--catalog"),
+                Design = UiPrefs.ParseDesign(Arg(args, "--design")),
+                Dock = UiPrefs.ParseDock(Arg(args, "--dock")),
+                DockCollapsed = args.Contains("--dock-collapsed"),
+                Sort = Arg(args, "--sort"),
+                Picker = args.Contains("--picker"),
+                SwitchTo = UiPrefs.ParseDesign(Arg(args, "--switch-design")),
             };
             if (int.TryParse(Arg(args, "--filter"), out int f)) opt.Filter = f;
             using var form = new MainForm(store, null, null, opt);
@@ -139,6 +148,7 @@ internal static class Program
             form.Size = new Size(w, h);
             form.Show();
             Application.DoEvents();
+            if (opt.SwitchTo != null) { form.SwitchDesignForRender(); Application.DoEvents(); }
             form.RenderTo(png);
             form.Hide();
             return 0;

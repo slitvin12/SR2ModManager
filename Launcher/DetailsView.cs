@@ -15,6 +15,8 @@ internal sealed class DetailsView : Canvas
 {
     private readonly Model _m;
     public ModEntry? Mod { get; private set; }
+    /// true — своя карточка с рамкой (отдельная панель); false — содержимое вкладки нижней панели.
+    public bool Framed = true;
     private List<BackupInfo> _backups = new();
     private string? _userData;
     private int _scroll, _contentH, _viewH;
@@ -94,7 +96,7 @@ internal sealed class DetailsView : Canvas
         int th = Math.Min(Theme.WrapHeight(text, Theme.Body, tw), lh * maxLines);
         int h = pad + Px(20) + th + pad;
         var r = new Rectangle(x, y, w, h);
-        Theme.FillRound(g, r, Px(10), bg);
+        Theme.FillRound(g, r, Math.Min(Px(10), Px(Theme.Spec.PanelRadius)), bg);
         Theme.Glyph(g, glyph, new Rectangle(x + pad - Px(2), y + pad - Px(1), Px(20), Px(20)), fg);
         Theme.Text(g, title, Theme.SmallBold, new Rectangle(tx, y + pad, tw, Px(18)), fg);
         Theme.Wrap(g, text, Theme.Body, new Rectangle(tx, y + pad + Px(20), tw, th + 1), Theme.Navy);
@@ -111,15 +113,15 @@ internal sealed class DetailsView : Canvas
         bool hv = IsHover(key), dn = IsDown(key);
         if (primary)
         {
-            Theme.FillRound(g, r, h / 2f, dn ? Theme.TealText : hv ? Theme.TealDark : Theme.Teal);
+            Theme.FillRound(g, r, Theme.Radius(h, S), dn ? Theme.TealText : hv ? Theme.TealDark : Theme.Teal);
             Theme.Glyph(g, glyph, new Rectangle(x + Px(14), y, Px(16), h), Color.White);
             Theme.Text(g, text, Theme.ButtonFont, new Rectangle(x + Px(36), y, w - Px(44), h), Color.White);
             AddHit(r, key, act, tip);
             return r;
         }
         Color bg = danger ? (hv ? Theme.CoralTint : Theme.Paper) : dn ? Theme.BeigeDark : hv ? Theme.Beige : Theme.Paper;
-        Theme.FillRound(g, r, h / 2f, bg);
-        Theme.StrokeRound(g, r, h / 2f, danger ? (hv ? Theme.Coral : Theme.Line) : hv ? Theme.LineDark : Theme.Line, Math.Max(1f, S));
+        Theme.FillRound(g, r, Theme.Radius(h, S), bg);
+        Theme.StrokeRound(g, r, Theme.Radius(h, S), danger ? (hv ? Theme.Coral : Theme.Line) : hv ? Theme.LineDark : Theme.Line, Math.Max(1f, S));
         Color fg = danger ? Theme.CoralText : Theme.Navy;
         Theme.Glyph(g, glyph, new Rectangle(x + Px(14), y, Px(16), h), danger ? Theme.Coral : Theme.NavySoft);
         Theme.Text(g, text, Theme.ButtonFont, new Rectangle(x + Px(36), y, w - Px(44), h), fg);
@@ -221,16 +223,22 @@ internal sealed class DetailsView : Canvas
 
     protected override void Draw(Graphics g)
     {
-        var card = new Rectangle(Px(2), Px(3), Width - Px(4), Height - Px(5));
-        Theme.FillRound(g, card, Px(16), Theme.Paper);
-        Theme.StrokeRound(g, card, Px(16), Theme.Line, Math.Max(1f, S));
+        // в нижней панели (Framed = false) рамку рисует сама панель — здесь только содержимое
+        var card = Framed ? new Rectangle(Px(2), Px(3), Width - Px(4), Height - Px(5)) : new Rectangle(-Px(6), -Px(8), Width + Px(12), Height + Px(10));
+        if (Framed)
+        {
+            Theme.FillRound(g, card, Px(Theme.Spec.PanelRadius), Theme.Paper);
+            Theme.StrokeRound(g, card, Px(Theme.Spec.PanelRadius), Theme.Line, Math.Max(1f, S));
+        }
         var m = Mod;
         if (m == null)
         {
             int sz = Px(56);
-            Theme.Slime(g, new RectangleF(card.X + (card.Width - sz) / 2f, card.Y + card.Height / 2f - Px(70), sz, sz * 0.86f), Theme.Pink);
-            Theme.Text(g, "Выберите мод слева", Theme.Strong, new Rectangle(card.X, card.Y + card.Height / 2, card.Width, Px(26)), Theme.Navy, TextFormatFlags.HorizontalCenter);
-            Theme.Text(g, "Здесь появятся описание, зависимости и журнал игры", Theme.Body, new Rectangle(card.X + Px(20), card.Y + card.Height / 2 + Px(26), card.Width - Px(40), Px(22)), Theme.Hint, TextFormatFlags.HorizontalCenter);
+            bool slime = card.Height >= Px(220);   // в низкой нижней панели — без картинки
+            int ty = slime ? card.Y + card.Height / 2 : card.Y + card.Height / 2 - Px(22);
+            if (slime) Theme.Slime(g, new RectangleF(card.X + (card.Width - sz) / 2f, card.Y + card.Height / 2f - Px(70), sz, sz * 0.86f), Theme.Pink);
+            Theme.Text(g, Framed ? "Выберите мод слева" : "Выберите мод в списке", Theme.Strong, new Rectangle(card.X, ty, card.Width, Px(26)), Theme.Navy, TextFormatFlags.HorizontalCenter);
+            Theme.Text(g, "Здесь появятся описание, зависимости и журнал игры", Theme.Body, new Rectangle(card.X + Px(20), ty + Px(26), card.Width - Px(40), Px(22)), Theme.Hint, TextFormatFlags.HorizontalCenter);
             return;
         }
 
@@ -262,12 +270,58 @@ internal sealed class DetailsView : Canvas
         var pill = Theme.Pill(g, inner.Right, y + Px(7), Px(24), st.Text, Theme.SmallBold, st.Bg, st.Fg, null, null, true);
         AddHit(pill, "st", null, st.Tip, null, false);
         int tx = tg.Right + Px(14);
-        Theme.Text(g, m.DisplayName, Theme.H2, new Rectangle(tx, y, pill.X - tx - Px(8), Px(36)), Theme.Navy);
-        y += Px(36);
         string meta = string.Join("  ·  ", new[] { string.IsNullOrEmpty(m.Version) ? null : "v" + m.Version, string.IsNullOrWhiteSpace(m.Author) ? null : m.Author, KindText(m) }.Where(s => !string.IsNullOrEmpty(s)));
-        Theme.Text(g, meta, Theme.Body, new Rectangle(tx, y - Px(4), inner.Right - tx, Px(20)), Theme.Hint);
-        y += Px(28);
+        if (Framed)
+        {
+            Theme.Text(g, m.DisplayName, Theme.H2, new Rectangle(tx, y, pill.X - tx - Px(8), Px(36)), Theme.Navy);
+            y += Px(36);
+            Theme.Text(g, meta, Theme.Body, new Rectangle(tx, y - Px(4), inner.Right - tx, Px(20)), Theme.Hint);
+            y += Px(28);
+        }
+        else
+        {   // в нижней панели высота дороже: название и версия с автором — одной строкой
+            int nameW = Math.Min(Theme.Measure(m.DisplayName, Theme.H2).Width + Px(4), pill.X - tx - Px(8));
+            Theme.Text(g, m.DisplayName, Theme.H2, new Rectangle(tx, y, nameW, Px(36)), Theme.Navy);
+            int mx = tx + nameW + Px(14);
+            if (pill.X - Px(10) - mx >= Px(80)) Theme.Text(g, meta, Theme.Body, new Rectangle(mx, y + Px(3), pill.X - Px(10) - mx, Px(36)), Theme.Hint);
+            y += Px(46);
+        }
 
+        // в широкой нижней панели — две колонки: слева описание, совместимость и действия, справа зависимости, журнал и файл
+        bool two = !Framed && w >= Px(860);
+        int gap = Px(36);
+        int lw = two ? (w - gap) * 56 / 100 : w, rx = x + lw + gap, rw = w - lw - gap;
+        int top = y;
+        y = MainPart(g, m, x, y, lw, avail, upd);
+        if (two)
+        {
+            y = ActionsPart(g, m, x, y, lw, avail, upd);
+            int yr = SidePart(g, m, rx, top, rw, avail, on);
+            using (var p = new Pen(Theme.Line, Math.Max(1f, S)))
+                g.DrawLine(p, rx - gap / 2, top + Px(6), rx - gap / 2, Math.Max(y, yr) - Px(20));
+            y = Math.Max(y, yr);
+        }
+        else
+        {
+            y = SidePart(g, m, x, y, w, avail, on);
+            y = ActionsPart(g, m, x, y, w, avail, upd);
+        }
+
+        _contentH = y + _scroll - inner.Y;
+        g.ResetClip();
+
+        if (_contentH > _viewH)
+        {
+            int track = card.Height - Px(28);
+            int th = Math.Max(Px(36), track * _viewH / Math.Max(1, _contentH));
+            int ty = card.Y + Px(14) + (track - th) * _scroll / Math.Max(1, _contentH - _viewH);
+            Theme.FillRound(g, new RectangleF(card.Right - Px(8), ty, Px(4), th), Px(2), Theme.Line);
+        }
+    }
+
+    /// Описание, «новая версия / не установлен», проблемы файла и совместимость.
+    private int MainPart(Graphics g, ModEntry m, int x, int y, int w, bool avail, UpdateInfo? upd)
+    {
         // ── описание
         bool noDesc = string.IsNullOrWhiteSpace(m.Description);
         string desc = noDesc ? "Описания нет. Его можно дописать в UserData\\ModManager\\profiles.json → «descriptions»." : m.Description;
@@ -308,6 +362,12 @@ internal sealed class DetailsView : Canvas
         // ── совместимость: MelonLoader 0.6/0.7, Unity, .NET 6, библиотеки, хуки Harmony
         if (!avail) y = CompatSection(g, m, x, y, w);
 
+        return y;
+    }
+
+    /// Зависимости, «нужен для», журнал игры, файл и старые версии.
+    private int SidePart(Graphics g, ModEntry m, int x, int y, int w, bool avail, bool on)
+    {
         // ── зависимости
         y = Section(g, "ЗАВИСИМОСТИ", x, y, w);
         if (m.DependsOn.Count == 0)
@@ -351,7 +411,7 @@ internal sealed class DetailsView : Canvas
         if (!avail)
         {
             string logTitle = _m.GameRunning ? "ЖУРНАЛ ЗАПУЩЕННОЙ ИГРЫ" : "ЖУРНАЛ ПРОШЛОГО ЗАПУСКА";
-            y = Section(g, logTitle, x, y, w, _m.Log != null ? "Открыть лог" : null, () => OpenLogRequested?.Invoke());
+            y = Section(g, logTitle, x, y, w, _m.Log != null ? (Framed ? "Открыть лог" : "Строки в «Логах»") : null, () => OpenLogRequested?.Invoke());
             if (_m.Log == null)
             {
                 Theme.Text(g, "Журнал MelonLoader не найден — игра с модами ещё не запускалась", Theme.Body, new Rectangle(x, y - Px(2), w, Px(22)), Theme.Hint);
@@ -431,6 +491,12 @@ internal sealed class DetailsView : Canvas
             y += Px(8);
         }
 
+        return y;
+    }
+
+    /// Кнопки действий.
+    private int ActionsPart(Graphics g, ModEntry m, int x, int y, int w, bool avail, UpdateInfo? upd)
+    {
         // ── действия
         y += Px(4);
         int ax = x;
@@ -450,16 +516,7 @@ internal sealed class DetailsView : Canvas
         }
         y += Px(34) + Px(12);
 
-        _contentH = y + _scroll - inner.Y;
-        g.ResetClip();
-
-        if (_contentH > _viewH)
-        {
-            int track = card.Height - Px(28);
-            int th = Math.Max(Px(36), track * _viewH / Math.Max(1, _contentH));
-            int ty = card.Y + Px(14) + (track - th) * _scroll / Math.Max(1, _contentH - _viewH);
-            Theme.FillRound(g, new RectangleF(card.Right - Px(8), ty, Px(4), th), Px(2), Theme.Line);
-        }
+        return y;
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)

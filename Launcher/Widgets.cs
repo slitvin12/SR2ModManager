@@ -29,10 +29,20 @@ internal class Surface : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
         g.PixelOffsetMode = PixelOffsetMode.Half;
-        using (var b = new SolidBrush(BackColor)) g.FillRectangle(b, ClientRectangle);
+        PaintBack(g, e.ClipRectangle);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
         Draw(g);
+    }
+
+    /// Фон под рисунком (только в перерисовываемой части). Прямоугольник по целым пикселям
+    /// без сглаживания даёт те же пиксели, что и со сглаживанием, но заливается заметно быстрее.
+    protected virtual void PaintBack(Graphics g, Rectangle clip)
+    {
+        var r = Rectangle.Intersect(clip, ClientRectangle);
+        if (r.Width <= 0 || r.Height <= 0) return;
+        using var b = new SolidBrush(BackColor);
+        g.FillRectangle(b, r);
     }
 
     protected virtual void Draw(Graphics g) { }
@@ -166,7 +176,6 @@ internal sealed class PillButton : Surface
     protected override void Draw(Graphics g)
     {
         var r = new RectangleF(0, 0, Width, Height);
-        float rad = Height / 2f;
         Color bg, fg, border = Color.Empty;
         switch (Look)
         {
@@ -188,11 +197,13 @@ internal sealed class PillButton : Surface
             bg = Look == Look.Primary ? Theme.Mix(Theme.Teal, Theme.Cream, 0.55f) : bg.A == 0 ? bg : Theme.Mix(bg, Theme.Cream, 0.5f);
             fg = Look == Look.Primary ? Color.FromArgb(235, 255, 255, 255) : Theme.Hint;
         }
-        if (Look == Look.Primary && Enabled && !_down)
-            Theme.Shadow(g, new RectangleF(r.X + Px(3), r.Y + Px(3), r.Width - Px(6), r.Height - Px(5)), rad, Px(6), 30);
-        var body = Look == Look.Primary ? new RectangleF(r.X + Px(1), r.Y + Px(1), r.Width - Px(2), r.Height - Px(3)) : r;
-        Theme.FillRound(g, body, body.Height / 2f, bg);
-        if (border != Color.Empty) Theme.StrokeRound(g, body, body.Height / 2f, border, Math.Max(1f, S));
+        bool shadow = Look == Look.Primary && Theme.Spec.Shadows;
+        if (shadow && Enabled && !_down)
+            Theme.Shadow(g, new RectangleF(r.X + Px(3), r.Y + Px(3), r.Width - Px(6), r.Height - Px(5)), Theme.Radius(r.Height - Px(5), S), Px(6), 30);
+        var body = shadow ? new RectangleF(r.X + Px(1), r.Y + Px(1), r.Width - Px(2), r.Height - Px(3)) : r;
+        float rad = Theme.Radius(body.Height, S);
+        Theme.FillRound(g, body, rad, bg);
+        if (border != Color.Empty) Theme.StrokeRound(g, body, rad, border, Math.Max(1f, S));
         var cr = Rectangle.Round(body);
         if (IconOnly || string.IsNullOrEmpty(Text))
         {
@@ -292,7 +303,7 @@ internal sealed class Segmented : Canvas
     private readonly Tween _x = new(-1f), _w = new(0f);
     public int Selected { get => _selected; set { if (_selected != value) { _selected = value; _slide = true; Invalidate(); } } }
     public event Action<int>? Changed;
-    public Color TrackColor = Theme.Beige;
+    public Color? TrackColor { get; set; }   // null — Theme.Beige активного стиля
 
     public Segmented() { Height = Px(34); }
 
@@ -318,7 +329,8 @@ internal sealed class Segmented : Canvas
     protected override void Draw(Graphics g)
     {
         var r = new RectangleF(0, 0, Width, Height);
-        Theme.FillRound(g, r, Height / 2f, TrackColor);
+        float tr = Theme.Radius(Height, S), ir = Math.Max(Px(2), tr - Px(3));
+        Theme.FillRound(g, r, tr, TrackColor ?? Theme.Beige);
         if (Items.Count == 0) return;
         _selected = Math.Clamp(_selected, 0, Items.Count - 1);
 
@@ -330,8 +342,8 @@ internal sealed class Segmented : Canvas
         else if (_slide) { _x.To(sx, 210, this); _w.To(swid, 210, this); }
         _slide = false;
         var pill = new RectangleF(_x.Value, Px(3), _w.Value, Height - Px(6));
-        Theme.Shadow(g, pill, pill.Height / 2f, Px(3), 14);
-        Theme.FillRound(g, pill, pill.Height / 2f, Theme.Paper);
+        if (!Theme.Dark) Theme.Shadow(g, pill, ir, Px(3), 14);
+        Theme.FillRound(g, pill, ir, Theme.Dark ? Theme.BeigeDark : Theme.Paper);
 
         int x = Px(3);
         for (int i = 0; i < Items.Count; i++)
@@ -340,7 +352,7 @@ internal sealed class Segmented : Canvas
             var sr = new Rectangle(x, Px(3), w, Height - Px(6));
             bool sel = i == _selected;
             string key = "seg" + i;
-            if (!sel && IsHover(key)) Theme.FillRound(g, sr, sr.Height / 2f, Theme.Alpha(Theme.Paper, 110));
+            if (!sel && IsHover(key)) Theme.FillRound(g, sr, ir, Theme.Alpha(Theme.Dark ? Theme.BeigeDark : Theme.Paper, 110));
             var it = Items[i];
             var ts = Theme.Measure(it.Text, Theme.ButtonFont);
             int bw = string.IsNullOrEmpty(it.Badge) ? 0 : Theme.Measure(it.Badge, Theme.SmallBold).Width + Px(12);
@@ -369,7 +381,7 @@ internal sealed class HintBox : TextBox
     public string HintShort = "";            // если полная подсказка не влезает в узкое поле
     public readonly Tween Alpha = new(1f);   // непрозрачность подсказки 0..1
     public readonly Tween Shift = new(0f);   // сдвиг вправо, px
-    public Color HintColor = Theme.Hint;
+    public Color? HintColor { get; set; }    // null — Theme.Hint активного стиля
 
     protected override void WndProc(ref Message m)
     {
@@ -386,7 +398,7 @@ internal sealed class HintBox : TextBox
                 // выбор по ширине без сдвига — чтобы текст не менялся посреди анимации
                 string hint = HintShort.Length > 0 && TextRenderer.MeasureText(g, Hint, Font, new Size(int.MaxValue, int.MaxValue),
                     TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Width > ClientSize.Width - 1 ? HintShort : Hint;
-                TextRenderer.DrawText(g, hint, Font, r, Theme.Mix(BackColor, HintColor, a),
+                TextRenderer.DrawText(g, hint, Font, r, Theme.Mix(BackColor, HintColor ?? Theme.Hint, a),
                     TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.Top | TextFormatFlags.Left);
             }
             catch { }
@@ -501,7 +513,7 @@ internal sealed class TextField : Surface
     protected override void Draw(Graphics g)
     {
         var r = new RectangleF(0, 0, Width, Height);
-        float rad = Round ? Height / 2f : Px(10);
+        float rad = Round ? Theme.Radius(Height, S) : Math.Min(Px(10), Theme.Radius(Height, S));
         float f = _focusT.Value;
         Theme.FillRound(g, r, rad, Theme.Paper);
         if (f > 0.01f) // мягкое свечение внутри рамки, пока поле в фокусе
@@ -680,8 +692,9 @@ internal sealed class StatusLine : Canvas
         var r = new RectangleF(0, 0, Width, Height);
         if (Filled)
         {
-            Theme.FillRound(g, r, Px(12), bg);
-            if (Tone == Tone.Neutral) Theme.StrokeRound(g, r, Px(12), Theme.Line, Math.Max(1f, S));
+            float rad = Math.Min(Px(12), Px(Theme.Spec.PanelRadius));
+            Theme.FillRound(g, r, rad, bg);
+            if (Tone == Tone.Neutral) Theme.StrokeRound(g, r, rad, Theme.Line, Math.Max(1f, S));
         }
         int x = Px(14);
         string glyph = Glyph ?? Tone switch { Tone.Warn => Theme.GWarning, Tone.Error => Theme.GError, Tone.Ok => Theme.GCheck, Tone.Info => Theme.GInfo, _ => Theme.GInfo };
@@ -695,8 +708,9 @@ internal sealed class StatusLine : Canvas
             var ar = new Rectangle(right - w, (Height - Px(28)) / 2, w, Px(28));
             string key = "a" + i;
             bool h = IsHover(key);
-            Theme.FillRound(g, ar, ar.Height / 2f, h ? Theme.Paper : Theme.Alpha(Theme.Paper, Filled ? 150 : 0));
-            Theme.StrokeRound(g, ar, ar.Height / 2f, h ? ic : Theme.Alpha(ic, 110), Math.Max(1f, S));
+            float arad = Theme.Radius(ar.Height, S);
+            Theme.FillRound(g, ar, arad, h ? Theme.Paper : Theme.Alpha(Theme.Paper, Filled ? 150 : 0));
+            Theme.StrokeRound(g, ar, arad, h ? ic : Theme.Alpha(ic, 110), Math.Max(1f, S));
             Theme.Text(g, text, Theme.ButtonFont, ar, Theme.Navy, TextFormatFlags.HorizontalCenter);
             int idx = i;
             AddHit(ar, key, () => { if (idx < Actions.Count) Actions[idx].Act(); });
@@ -741,7 +755,23 @@ internal static class Menus
             else e.TextColor = e.Item.Enabled ? Theme.Navy : Theme.Hint;
             base.OnRenderItemText(e);
         }
+        protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
+        {
+            e.ArrowColor = e.Item?.Enabled == false ? Theme.Hint : Theme.NavySoft;
+            base.OnRenderArrow(e);
+        }
+        protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
+        {
+            // своя галочка: системная рисуется чёрной и теряется на тёмном фоне
+            var r = e.ImageRectangle;
+            if (r.Width <= 0) return;
+            Theme.FillRound(e.Graphics, new RectangleF(r.X - 1, r.Y - 1, r.Width + 2, r.Height + 2), Math.Max(3f, r.Height / 4f), Theme.TealTint);
+            Theme.Glyph(e.Graphics, Theme.GCheck, r, Theme.TealText, Theme.IconsSmall);
+        }
     }
+
+    /// Оформление меню и выпадающих панелей (палитра берётся при каждой отрисовке).
+    public static ToolStripRenderer NewRenderer() => new Renderer();
 
     public static ContextMenuStrip Create(Control owner)
     {

@@ -1,22 +1,105 @@
-// Theme.cs — палитра, шрифты и примитивы рисования лаунчера (в стиле панели в игре и Creator Toolkit:
-// кремовый фон, тёмно-синий текст, бирюзовые акценты, слайм-логотип).
+// Theme.cs — палитра, шрифты и примитивы рисования лаунчера. Цвета берутся из активного стиля (Designs.cs):
+// «Компактный» (тёмная таблица), «Fluent» (светлые карточки) или «Слаймовый» (цвета игры). Смена стиля (Use)
+// перекрашивает уже созданные элементы (Retint) — перезапуск не нужен.
 using System;
 using System.Linq;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
+using SR2ModManager.Core;
 
 namespace SR2ModManager.Launcher;
 
 internal static class Theme
 {
-    public static readonly Color Cream = Hex(0xF7F3EA), Paper = Color.White, Beige = Hex(0xEFE6D6), BeigeDark = Hex(0xE5D9C3),
-        Line = Hex(0xE2D8C4), LineDark = Hex(0xCBBDA3), Navy = Hex(0x1F2A44), NavySoft = Hex(0x56607A), Hint = Hex(0x8A8F9C),
-        Teal = Hex(0x22C3A6), TealDark = Hex(0x17A98F), Coral = Hex(0xFF7A6B), Orange = Hex(0xFFA445), Pink = Hex(0xFF6FAE), Blue = Hex(0x4C8DF6);
-    public static readonly Color TealTint = Hex(0xE2F6F1), CoralTint = Hex(0xFFEBE7), OrangeTint = Hex(0xFFF0DB), BlueTint = Hex(0xE7EFFE),
-        PinkTint = Hex(0xFFE8F2), Selected = Hex(0xF2FBF8);
-    public static readonly Color TealText = Hex(0x0C7A66), CoralText = Hex(0xC23B2A), OrangeText = Hex(0xA45A05), BlueText = Hex(0x2B5FC4);
+    // ───── активный стиль и палитра ─────
+    public static Palette P { get; private set; } = Designs.Compact.Palette;
+    public static DesignKind Design { get; private set; } = DesignKind.Compact;
+    public static DesignSpec Spec => Designs.Get(Design);
+    /// Растёт при каждой смене палитры: входит в подписи кэшированных картинок (карточки, значки-аватары).
+    public static int Generation { get; private set; }
+    public static event Action? Changed;
+
+    /// Включить стиль. false — он уже активен.
+    public static bool Use(DesignKind d)
+    {
+        var spec = Designs.Get(d);
+        if (d == Design && ReferenceEquals(P, spec.Palette)) return false;
+        Design = d;
+        P = spec.Palette;
+        Generation++;
+        Changed?.Invoke();
+        return true;
+    }
+
+    public static Color Cream => P.Cream;
+    public static Color Paper => P.Paper;
+    public static Color Beige => P.Beige;
+    public static Color BeigeDark => P.BeigeDark;
+    public static Color Line => P.Line;
+    public static Color LineDark => P.LineDark;
+    public static Color Navy => P.Navy;
+    public static Color NavySoft => P.NavySoft;
+    public static Color Hint => P.Hint;
+    public static Color Teal => P.Teal;
+    public static Color TealDark => P.TealDark;
+    public static Color Coral => P.Coral;
+    public static Color Orange => P.Orange;
+    public static Color Pink => P.Pink;
+    public static Color Blue => P.Blue;
+    public static Color TealTint => P.TealTint;
+    public static Color CoralTint => P.CoralTint;
+    public static Color OrangeTint => P.OrangeTint;
+    public static Color BlueTint => P.BlueTint;
+    public static Color PinkTint => P.PinkTint;
+    public static Color Selected => P.Selected;
+    public static Color TealText => P.TealText;
+    public static Color CoralText => P.CoralText;
+    public static Color OrangeText => P.OrangeText;
+    public static Color BlueText => P.BlueText;
+    public static Color PurpleTint => P.PurpleTint;
+    public static Color PurpleText => P.PurpleText;
+    public static Color RowAlt => P.RowAlt;
+    public static Color RowHover => P.RowHover;
+    public static Color HeaderBg => P.HeaderBg;
+    public static bool Dark => P.Dark;
+    /// Тёмно-синий «чернильный» цвет слайма и теней — не зависит от палитры (в тёмной теме Navy — светлый текст).
+    public static readonly Color Ink = Hex(0x1F2A44);
+
+    /// Радиус скругления элемента высотой h (кнопки, поле поиска, сегменты): капсула или скругление стиля.
+    public static float Radius(float h, float scale)
+    {
+        int r = Spec.CtrlRadius;
+        return r < 0 ? h / 2f : Math.Min(h / 2f, r * scale);
+    }
+
+    /// Порядок ролей для Retint: цвета, которые элементы получают при создании (BackColor, ForeColor).
+    private static readonly Func<Palette, Color>[] Roles =
+    {
+        p => p.Cream, p => p.Paper, p => p.Navy, p => p.NavySoft, p => p.Hint, p => p.Beige, p => p.BeigeDark, p => p.Line, p => p.Selected, p => p.HeaderBg,
+    };
+
+    /// После смены палитры: BackColor/ForeColor элементов, совпадающие с ролью старой палитры, получают цвет той же роли
+    /// новой. Прозрачные и свои (не из палитры) цвета остаются как есть.
+    public static void Retint(Control root, Palette from, Palette to)
+    {
+        if (ReferenceEquals(from, to)) return;
+        Color? Map(Color c)
+        {
+            if (c.A == 0) return null;
+            int v = c.ToArgb();
+            foreach (var role in Roles) if (role(from).ToArgb() == v) return role(to);
+            return null;
+        }
+        void Walk(Control c)
+        {
+            if (Map(c.BackColor) is Color b && b != c.BackColor) c.BackColor = b;
+            if (Map(c.ForeColor) is Color f && f != c.ForeColor) c.ForeColor = f;
+            foreach (Control k in c.Controls) Walk(k);
+        }
+        Walk(root);
+    }
 
     public static Color Hex(int rgb, int a = 255) => Color.FromArgb(a, (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
     public static Color Mix(Color a, Color b, float t)
@@ -35,10 +118,19 @@ internal static class Theme
     public static readonly Font H2 = new("Segoe UI Semibold", 13.5f);
     public static readonly Font Title = new("Segoe UI Semibold", 17f);
     public static readonly Font Section = new("Segoe UI Semibold", 8f);
+    public static readonly Font Mono = MakeMono();
     public static readonly Font Icons = new("Segoe MDL2 Assets", 10f);
     public static readonly Font IconsSmall = new("Segoe MDL2 Assets", 8f);
     public static readonly Font IconsBig = new("Segoe MDL2 Assets", 15f);
     public static readonly bool HasIcons = Icons.Name == "Segoe MDL2 Assets";
+
+    private static Font MakeMono()
+    {
+        var f = new Font("Consolas", 9f);
+        if (f.Name == "Consolas") return f;
+        f.Dispose();
+        return new Font(FontFamily.GenericMonospace, 9f);
+    }
 
     // ───── глифы Segoe MDL2 Assets (с запасным символом, если шрифта нет) ─────
     public static string G(string mdl2, string fallback) => HasIcons ? mdl2 : fallback;
@@ -67,6 +159,13 @@ internal static class Theme
     public static string GPlug => G("\uE7FC", "◆");
     public static string GSync => G("\uE895", "↻");
     public static string GOpen => G("\uE8A7", "↗");
+    public static string GPalette => G("\uE790", "◐");
+    public static string GChevronUp => G("\uE70E", "▴");
+    public static string GChevronDown => G("\uE70D", "▾");
+    public static string GSortUp => G("\uE70E", "▲");
+    public static string GSortDown => G("\uE70D", "▼");
+    public static string GBug => G("\uEBE8", "!");
+    public static string GList => G("\uEA37", "≡");
 
     // ───── текст ─────
     public const TextFormatFlags Line1 = TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix;
@@ -79,7 +178,7 @@ internal static class Theme
     }
 
     /// Подсветка найденного в поиске (мягкий жёлтый маркер).
-    public static readonly Color Mark = Hex(0xFFE38A);
+    public static Color Mark => P.Mark;
 
     /// Ширина начала строки длиной len (с хвостовыми пробелами — MeasureText их сам не считает).
     public static int PrefixWidth(string s, int len, Font f)
@@ -226,13 +325,14 @@ internal static class Theme
         for (int i = 3; i >= 1; i--)
         {
             float k = spread * i / 3f;
-            FillRound(g, new RectangleF(r.X - k * 0.5f, r.Y + k * 0.35f, r.Width + k, r.Height + k * 0.6f), rad + k, Color.FromArgb(alpha / i, 31, 42, 68));
+            FillRound(g, new RectangleF(r.X - k * 0.5f, r.Y + k * 0.35f, r.Width + k, r.Height + k * 0.6f), rad + k,
+                P.Dark ? Color.FromArgb(Math.Min(255, alpha * 3 / i), 0, 0, 0) : Color.FromArgb(alpha / i, 31, 42, 68));
         }
     }
 
     public static void Toggle(Graphics g, Rectangle r, bool on, bool hover, bool dim = false)
     {
-        Color track = on ? (hover ? TealDark : Teal) : (hover ? LineDark : Hex(0xD9CDB6));
+        Color track = on ? (hover ? TealDark : Teal) : (hover ? LineDark : P.ToggleOff);
         if (dim) track = Mix(track, Cream, 0.55f);
         FillRound(g, r, r.Height / 2f, track);
         float inset = Math.Max(2f, r.Height * 0.13f), d = r.Height - 2f * inset;
@@ -290,7 +390,7 @@ internal static class Theme
         path.CloseFigure();
         using (var lg = new LinearGradientBrush(new RectangleF(x, top, w, bottom - top + 1), Mix(body, Color.White, 0.35f), body, LinearGradientMode.Vertical))
             g.FillPath(lg, path);
-        using (var pen = new Pen(Mix(body, Navy, 0.18f), Math.Max(1f, w / 40f))) g.DrawPath(pen, path);
+        using (var pen = new Pen(Mix(body, Ink, 0.18f), Math.Max(1f, w / 40f))) g.DrawPath(pen, path);
         // блик
         using (var hb = new SolidBrush(Color.FromArgb(150, 255, 255, 255)))
         {
@@ -299,7 +399,7 @@ internal static class Theme
         }
         // глаза
         float ey = y + h * 0.42f, ew = w * 0.13f, eh = h * 0.2f;
-        using (var eb = new SolidBrush(Navy))
+        using (var eb = new SolidBrush(Ink))
         {
             g.FillEllipse(eb, x + w * 0.29f, ey, ew, eh);
             g.FillEllipse(eb, x + w * 0.58f, ey, ew, eh);
@@ -315,7 +415,7 @@ internal static class Theme
             g.FillEllipse(cb, x + w * 0.14f, y + h * 0.6f, w * 0.14f, h * 0.08f);
             g.FillEllipse(cb, x + w * 0.72f, y + h * 0.6f, w * 0.14f, h * 0.08f);
         }
-        using (var mp = new Pen(Navy, Math.Max(1.2f, w / 26f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+        using (var mp = new Pen(Ink, Math.Max(1.2f, w / 26f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
         {
             if (happy) g.DrawArc(mp, x + w * 0.42f, y + h * 0.58f, w * 0.16f, h * 0.1f, 10, 160);
             else g.DrawLine(mp, x + w * 0.44f, y + h * 0.66f, x + w * 0.56f, y + h * 0.66f);

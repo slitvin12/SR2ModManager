@@ -19,6 +19,7 @@
     <Compile Include="..\Shared\Catalog.cs" Link="Catalog.cs" />
     <Compile Include="..\Shared\Compat.cs" Link="Compat.cs" />
     <Compile Include="..\Shared\Backups.cs" Link="Backups.cs" />
+    <Compile Include="..\Shared\UiPrefs.cs" Link="UiPrefs.cs" />
     <EmbeddedResource Include="app.ico" LogicalName="app.ico" Condition="Exists('app.ico')" />
   </ItemGroup>
 </Project>

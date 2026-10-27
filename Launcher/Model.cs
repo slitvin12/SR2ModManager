@@ -76,25 +76,44 @@ internal sealed class Model
     }
 
     /// Проблемы без совместимости: не читается, зависимости, конфликты, копии, ошибки в журнале.
-    public List<(string Text, Tone Tone)> BaseProblems(ModEntry m)
+    public List<(string Text, Tone Tone)> BaseProblems(ModEntry m) => ProblemDetails(m).Select(p => (p.Badge, p.Tone)).ToList();
+
+    /// То же с пояснением — для вкладки «Проблемы»: короткая метка (как на карточке), что не так и что сделать.
+    public List<(string Badge, string Text, Tone Tone)> ProblemDetails(ModEntry m)
     {
-        var p = new List<(string, Tone)>();
+        var p = new List<(string, string, Tone)>();
         if (m.Available) return p;
-        if (!m.Readable) p.Add(("не читается как мод", Tone.Error));
+        if (!m.Readable) p.Add(("не читается как мод", "Файл не удалось прочитать как .NET-сборку — скорее всего, это не мод MelonLoader.", Tone.Error));
         if (On(m.Id))
             foreach (var d in m.DependsOn)
             {
                 var dm = Find(d);
-                if (dm == null) { if (!IsKnownLib(d)) p.Add(($"нет «{d}»", Tone.Error)); }
-                else if (!On(dm.Id)) p.Add(($"нужен {dm.DisplayName}", Tone.Error));
+                if (dm == null)
+                {
+                    if (IsKnownLib(d)) continue;
+                    bool found = FindAny(d) != null;
+                    p.Add(($"нет «{d}»", $"Нужен «{d}», но такого мода нет в папке Mods" + (found ? " — он есть среди доступных, его можно установить." : "."), Tone.Error));
+                }
+                else if (!On(dm.Id)) p.Add(($"нужен {dm.DisplayName}", $"Нужен {dm.DisplayName}, но он выключен — без него мод не заработает.", Tone.Error));
             }
         foreach (var pair in Cfg.Conflicts)
             if (pair.Count >= 2 && pair.Contains(m.Id, StringComparer.OrdinalIgnoreCase) && pair.All(On))
-                p.Add(("конфликт", Tone.Error));
-        if (m.DuplicateInDisabled) p.Add(("копия в Disabled", Tone.Warn));
+            {
+                var others = pair.Where(x => !x.Equals(m.Id, StringComparison.OrdinalIgnoreCase)).Select(NameOf);
+                p.Add(("конфликт", "Не работает вместе с " + string.Join(", ", others) + " (список «conflicts» в profiles.json) — оставьте включённым что-то одно.", Tone.Error));
+            }
+        if (m.DuplicateInDisabled) p.Add(("копия в Disabled", "В Mods\\Disabled лежит ещё одна (старая) копия этого файла — игра загружает только копию из Mods.", Tone.Warn));
         var ls = LogFor(m);
-        if (ls != null && ls.Errors > 0) p.Add((ls.Errors + " " + Theme.Plural(ls.Errors, "ошибка", "ошибки", "ошибок") + " в логе", Tone.Error));
+        if (ls != null && ls.Errors > 0)
+            p.Add((ls.Errors + " " + Theme.Plural(ls.Errors, "ошибка", "ошибки", "ошибок") + " в логе",
+                "В журнале прошлого запуска " + Theme.Count(ls.Errors, "ошибка", "ошибки", "ошибок") + (ls.LastError.Length > 0 ? ", последняя: " + OneLine(ls.LastError) : "") + " — см. вкладку «Логи».", Tone.Error));
         return p;
+    }
+
+    private static string OneLine(string s)
+    {
+        s = s.Replace("\r", " ").Replace("\n", " ").Trim();
+        return s.Length > 160 ? s.Substring(0, 160) + "…" : s;
     }
 
     public bool HasProblem(ModEntry m) => Problems(m).Count > 0;
@@ -115,7 +134,7 @@ internal sealed class Model
             return ("не загружен", Theme.OrangeTint, Theme.OrangeText, "Включён, но в журнале текущей игры его загрузки нет — появился после запуска или не загрузился");
         }
         var err = CompatFor(m).FirstOrDefault(i => i.Level == CompatLevel.Error);
-        if (err != null) return ("не загрузится", Theme.CoralTint, Theme.CoralText, "Включён, но проверка совместимости нашла ошибку: " + err.Title + ". Подробности — справа, в разделе «Совместимость».");
+        if (err != null) return ("не загрузится", Theme.CoralTint, Theme.CoralText, "Включён, но проверка совместимости нашла ошибку: " + err.Title + ". Подробности — внизу, во вкладке «Детали», раздел «Совместимость».");
         return ("включён", Theme.TealTint, Theme.TealText, "Лежит в Mods — загрузится при запуске игры");
     }
 

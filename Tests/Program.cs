@@ -492,6 +492,9 @@ try
 
     // совместимость модов, бэкапы сохранений, пресеты (Compat.cs, Backups.cs)
     ExtraTests.Run(realMods, root, Check);
+
+    // настройки вида лаунчера (ui.json), сортировка таблицы, журнал для вкладки «Логи» (UiPrefs.cs)
+    UiTests.Run(root, Check);
 }
 catch (Exception e) { fail++; Console.WriteLine("FAIL exception " + e); }
 finally { try { Directory.Delete(root, true); } catch { } }

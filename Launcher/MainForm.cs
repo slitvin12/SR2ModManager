@@ -1,4 +1,5 @@
-// MainForm.cs — окно лаунчера: наборы модов, поиск и быстрые фильтры, карточки модов, подробности,
+// MainForm.cs — окно лаунчера: наборы модов, поиск и быстрые фильтры, список модов (таблица, карточки или капсулы —
+// по выбранному дизайну), нижняя панель (MainForm.Dock.cs: «Проблемы», «Хуки Harmony», «Логи», «Детали»),
 // каталог доступных модов и обновлений (ModManager\Library, «Загрузки»), установка перетаскиванием,
 // планирование изменений при запущенной игре, «Играть».
 using System;
@@ -22,10 +23,16 @@ internal sealed class RenderOptions
     public string? Toast;
     public bool Drop;
     public string? CatalogDir;   // --catalog: папка, которая в снимке играет роль «Загрузок»
+    public DesignKind? Design;   // --design compact|fluent|slime (по умолчанию — «Компактный»; ui.json в снимке не читается)
+    public DockTab? Dock;        // --dock problems|hooks|logs|details: открытая вкладка нижней панели
+    public bool DockCollapsed;   // --dock-collapsed: панель свёрнута до полосы вкладок
+    public string? Sort;         // --sort колонка[:asc|:desc], например «compat:desc»
+    public bool Picker;          // --picker: открыт выбор дизайна (как после кнопки «Дизайн»)
+    public DesignKind? SwitchTo; // --switch-design: после показа окна сменить стиль на лету (проверка смены без перезапуска)
     public bool Bench { get; set; } // --bench: замеры — проверка совместимости и значки грузятся в фоне, как в обычном запуске
 }
 
-internal sealed class MainForm : Form
+internal sealed partial class MainForm : Form
 {
     private sealed class RootView : Canvas
     {
@@ -101,6 +108,10 @@ internal sealed class MainForm : Form
     {
         _store = store;
         _render = render;
+        // стиль — до создания списка и панелей: они берут размеры и цвета активного дизайна
+        var paletteBefore = Theme.P;
+        LoadUi(store, render);
+        Theme.Use(_ui.DesignKind);
         if (render != null) Anim.Enabled = false; // снимок — сразу конечные кадры анимаций
         _startupInstall = install ?? Array.Empty<string>();
         _startupMessage = startupMessage;
@@ -110,6 +121,7 @@ internal sealed class MainForm : Form
         _icons = new IconCache(_list, store) { Sync = render != null && !render.Bench };
         _list.Icons = _icons;
         _icons.Ready += id => _list.InvalidateCard(id);
+        SetupDock();
 
         Text = "SR2 Mod Manager — Slime Rancher 2";
         Font = Theme.Body;
@@ -119,7 +131,9 @@ internal sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         float s = DeviceDpi / 96f;
         MinimumSize = new Size((int)(900 * s), (int)(620 * s));
-        Size = new Size((int)(1140 * s), (int)(780 * s));
+        // с нижней панелью окну нужна высота: по умолчанию 1180×840, но не больше рабочей области экрана
+        var wa = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1040);
+        Size = new Size(Math.Max(MinimumSize.Width, Math.Min((int)(1180 * s), wa.Width)), Math.Max(MinimumSize.Height, Math.Min((int)(840 * s), wa.Height)));
         try
         {
             // своя иконка-слайм (вшита в exe со всеми размерами); если её нет — иконка игры
@@ -143,7 +157,7 @@ internal sealed class MainForm : Form
         _status.Height = _root.Px(40);
 
         _root.Painter = PaintRoot;
-        _root.Controls.AddRange(new Control[] { _chips, _search, _filter, _allOn, _allOff, _banner, _list, _details, _status, _launchVia, _more, _openMods, _openLogs, _saveBackup, _reset, _apply, _play });
+        _root.Controls.AddRange(new Control[] { _chips, _search, _filter, _allOn, _allOff, _designBtn, _banner, _list, _grip, _dock, _status, _launchVia, _more, _openMods, _openLogs, _saveBackup, _reset, _apply, _play });
         Controls.Add(_root);
         _root.Layout += (_, _) => DoLayout();
 
@@ -156,7 +170,7 @@ internal sealed class MainForm : Form
         _filter.Changed += i => { if (i >= 0 && i < _filterKinds.Count) SetFilter(_filterKinds[i]); };
         _allOn.Click += (_, _) => SetAll(true);
         _allOff.Click += (_, _) => SetAll(false);
-        _list.SelectionChanged += () => ShowDetails(false);
+        _list.SelectionChanged += () => { ShowDetails(false); OnDockSelection(); };
         _list.ToggleRequested += Toggle;
         _list.MenuRequested += ModMenu;
         _list.DeleteRequested += DeleteMod;
@@ -173,7 +187,7 @@ internal sealed class MainForm : Form
         _details.RevealRequested += m => Report(Shell.Reveal(m.Path));
         _details.SettingsRequested += m => { var d = _store.UserDataDirFor(m); if (d != null) Report(Shell.OpenFolder(d)); };
         _details.DeleteRequested += DeleteMod;
-        _details.OpenLogRequested += () => Report(Shell.Open(_store.MelonLogPath));
+        _details.OpenLogRequested += () => { _ui.LogSelectedOnly = true; SaveUi(); ShowDockTab(DockTab.Logs); };
         _launchVia.Changed += i => { _m.Cfg.LaunchVia = i == 1 ? "exe" : "steam"; SaveCfg(); };
         _more.Click += (_, _) => MoreMenu();
         _openMods.Click += (_, _) => Report(Shell.OpenFolder(_store.ModsDir));
@@ -189,7 +203,7 @@ internal sealed class MainForm : Form
         _catalogDebounce.Tick += (_, _) => { _catalogDebounce.Stop(); StartCatalogScan(); };
 
         // перетаскивание файлов модов в окно
-        foreach (Control c in new Control[] { this, _root, _chips, _filter, _banner, _list, _details, _status })
+        foreach (Control c in new Control[] { this, _root, _chips, _filter, _banner, _list, _grip, _dock, _details, _problems, _hooks, _logs, _status })
         {
             c.AllowDrop = true;
             c.DragEnter += OnDragEnter;
@@ -197,6 +211,9 @@ internal sealed class MainForm : Form
             c.DragLeave += (_, _) => _list.DropHint = false;
             c.DragDrop += OnDragDrop;
         }
+        // элементы, созданные до выбора стиля (поля формы), — в цвета активного дизайна
+        Theme.Retint(this, paletteBefore, Theme.P);
+        HandleCreated += (_, _) => ApplyTitleBar();
 
         _m.GameRunning = render?.AssumeRunning ?? ModStore.IsGameRunning();
         _m.GameStarted = _m.GameRunning && render == null ? GameStartTime() : render?.AssumeRunning == true ? DateTime.Now.AddMinutes(-83) : null;
@@ -214,6 +231,7 @@ internal sealed class MainForm : Form
             _list.DropHint = render.Drop;
             ActiveControl = _list; // как в обычном запуске: фокус на списке, у поиска видна подсказка
             if (render.Bench) Shown += (_, _) => StartCompatCheck(); // как в обычном запуске — после показа окна, в фоне
+            if (render.Picker) AddPickerForRender();
         }
         else
         {
@@ -271,6 +289,7 @@ internal sealed class MainForm : Form
         _m.Sel = sel;
         _m.Log = _store.ReadMelonLog(_m.Mods);
         _logStamp = _m.Log?.Updated ?? default;
+        LoadLogTail(true);
         _m.Stored = _store.ListAllBackups(_m.Mods);
         _m.RecomputeCatalog();
         _userDataCache.Clear();
@@ -303,6 +322,8 @@ internal sealed class MainForm : Form
         UpdateBanner();
         UpdateStatus();
         UpdateFooter();
+        SyncDockTools();
+        RefreshDock();
         if (!keepDetails) _details.Invalidate();
         string rs = RootSig();
         if (rs != _rootSig) { _rootSig = rs; _root.Invalidate(); }
@@ -386,11 +407,13 @@ internal sealed class MainForm : Form
         SetEmptyState(q, text.Trim(), total);
         bool newQuery = !q.IsEmpty && !string.Equals(text.Trim(), _lastQuery, StringComparison.OrdinalIgnoreCase);
         _lastQuery = text.Trim();
+        string? best = view.FirstOrDefault()?.Id;   // лучшее совпадение — до сортировки по колонке
+        view = SortView(view);
         _list.SetView(view);
         string? keep = _list.SelectedId;
         bool visible = keep != null && view.Any(v => v.Id.Equals(keep, StringComparison.OrdinalIgnoreCase));
-        // новый запрос — выбрать лучшее совпадение (оно первое); иначе оставить выбранный мод, если он виден
-        if (newQuery || !visible) _list.Select(view.FirstOrDefault()?.Id);
+        // новый запрос — выбрать лучшее совпадение; иначе оставить выбранный мод, если он виден
+        if (newQuery || !visible) _list.Select(newQuery ? best : view.FirstOrDefault()?.Id);
         else _list.EnsureVisible();
         ShowDetails(false, repaintDetails);
     }
@@ -668,44 +691,64 @@ internal sealed class MainForm : Form
         int P(float v) => _root.Px(v);
         int W = _root.ClientSize.Width, H = _root.ClientSize.Height;
         int L = P(22), R = W - P(22);
-        int y = P(92);
+        int y = P(Theme.Spec.HeaderH);
         int chipsH = _chips.MeasureHeight(R - L);
         _lastChipsH = chipsH;
         _chips.SetBounds(L, y, R - L, chipsH);
-        y += chipsH + P(14);
+        y += chipsH + P(Theme.Spec.Mode == ListMode.Table ? 10 : 14);
 
         // панель: поиск + быстрые фильтры в одну строку, если влезают; иначе фильтры — второй строкой.
-        // «Включить/Выключить все» — с текстом, только значками или скрыты, смотря сколько места осталось.
+        // Справа — «Включить/Выключить все» и «Дизайн»: с подписями, значками или (вкл/выкл) скрыты — смотря сколько
+        // места; поле поиска ради них сжимается до 260 px. «Дизайн» виден всегда.
         int tbH = P(36);
         int fw = _filter.PreferredWidth();
         _lastFilterW = fw;
         int gap = P(12);
-        int searchW = Math.Clamp((R - L) * 34 / 100, P(260), P(400));
-        bool oneRow = searchW + gap + fw <= R - L;
-        if (!oneRow && P(230) + gap + fw <= R - L) { searchW = R - L - gap - fw; oneRow = true; }
-        bool bulkWasIcons = _allOn.IconOnly;
-        _allOn.IconOnly = _allOff.IconOnly = false;
+        bool bulkWasIcons = _allOn.IconOnly, designWasIcon = _designBtn.IconOnly;
+        _allOn.IconOnly = _allOff.IconOnly = _designBtn.IconOnly = false;
         int bulkFull = _allOn.PreferredWidth() + P(4) + _allOff.PreferredWidth(), bulkIcon = tbH * 2 + P(4);
-        int rowRight;
-        if (oneRow)
+        int designFull = _designBtn.PreferredWidth(), designIcon = tbH, sep = P(10);
+        // варианты правой группы — от самого подробного: (ширина, вкл/выкл с подписями, значками, «Дизайн» с подписью)
+        var opts = new (int W, bool Full, bool Icons, bool DesignText)[]
         {
-            _search.SetBounds(L, y, searchW, tbH);
-            _filter.SetBounds(_search.Right + gap, y + (tbH - P(34)) / 2, fw, P(34));
-            rowRight = _filter.Right + gap;
+            (bulkFull + sep + designFull, true, false, true),
+            (bulkFull + sep + designIcon, true, false, false),
+            (bulkIcon + sep + designIcon, false, true, false),
+            (designIcon, false, false, false),
+        };
+        int wantSearch = Math.Clamp((R - L) * 34 / 100, P(260), P(400));
+        int pick = -1, searchW = 0;
+        bool oneRow = false;
+        foreach (int minSearch in new[] { P(260), P(230) })
+        {
+            for (int i = 0; i < opts.Length && pick < 0; i++)
+            {
+                int room = R - L - gap - fw - gap - opts[i].W;
+                if (room >= minSearch) { pick = i; searchW = Math.Min(wantSearch, room); oneRow = true; }
+            }
+            if (pick >= 0) break;
         }
-        else
-        {   // узко: первая строка — поиск и «вкл/выкл все», вторая — фильтры
-            _search.SetBounds(L, y, Math.Min(R - L, P(520)), tbH);
-            _filter.SetBounds(L, y + tbH + P(10) + (tbH - P(34)) / 2, Math.Min(fw, R - L), P(34));
-            rowRight = _search.Right + gap;
+        if (!oneRow)
+        {   // узко: первая строка — поиск, «вкл/выкл все» и «Дизайн», вторая — фильтры
+            for (int i = 0; i < opts.Length && pick < 0; i++)
+                if (R - L - gap - opts[i].W >= P(260) || i == opts.Length - 1) pick = i;
+            searchW = Math.Min(P(520), R - L - gap - opts[pick].W);
         }
-        bool full = R - rowRight >= bulkFull, icons = !full && R - rowRight >= bulkIcon;
-        _allOn.IconOnly = _allOff.IconOnly = icons;
+        var o = opts[pick];
+        _search.SetBounds(L, y, searchW, tbH);
+        if (oneRow) _filter.SetBounds(_search.Right + gap, y + (tbH - P(34)) / 2, fw, P(34));
+        else _filter.SetBounds(L, y + tbH + P(10) + (tbH - P(34)) / 2, Math.Min(fw, R - L), P(34));
+        _designBtn.IconOnly = !o.DesignText;
+        int dw = _designBtn.PreferredWidth();
+        _designBtn.SetBounds(R - dw, y, dw, tbH);
+        PlaceRenderPicker();
+        _allOn.IconOnly = _allOff.IconOnly = o.Icons;
         int offW = _allOff.PreferredWidth(), onW = _allOn.PreferredWidth();
-        _allOff.SetBounds(R - offW, y, offW, tbH);
+        _allOff.SetBounds(_designBtn.Left - sep - offW, y, offW, tbH);
         _allOn.SetBounds(_allOff.Left - P(4) - onW, y, onW, tbH);
-        _allOn.Visible = _allOff.Visible = full || icons;
-        if (icons != bulkWasIcons) { _allOn.Invalidate(); _allOff.Invalidate(); }
+        _allOn.Visible = _allOff.Visible = o.Full || o.Icons;
+        if (o.Icons != bulkWasIcons) { _allOn.Invalidate(); _allOff.Invalidate(); }
+        if (_designBtn.IconOnly != designWasIcon) _designBtn.Invalidate();
         y += tbH + P(12) + (oneRow ? 0 : tbH + P(10));
 
         _lastBanner = _banner.Visible;
@@ -717,13 +760,19 @@ internal sealed class MainForm : Form
         }
 
         int footerTop = H - FooterH;
-        int statusH = P(40);
-        int statusY = footerTop - P(12) - statusH;
+        bool dense = Theme.Spec.Mode == ListMode.Table;
+        int statusH = P(dense ? 36 : 40), vgap = P(dense ? 10 : 12);
+        int statusY = footerTop - vgap - statusH;
         _status.SetBounds(L, statusY, R - L, statusH);
-        int bottom = statusY - P(12);
-        int detailsW = Math.Clamp((R - L) * 42 / 100, P(380), P(560));
-        _list.SetBounds(L - P(3), y - P(3), R - L - detailsW - P(14) + P(6), Math.Max(P(60), bottom - y + P(6)));
-        _details.SetBounds(R - detailsW, y - P(3), detailsW, Math.Max(P(60), bottom - y + P(6)));
+        int bottom = statusY - vgap;
+        // список — во всю ширину; под ним ручка и нижняя панель (вкладки «Проблемы», «Хуки», «Логи», «Детали»)
+        int gripH = P(10);
+        int dockH = DockHeightFor(bottom - y);
+        int dockTop = bottom - dockH;
+        int listBottom = Math.Max(y + P(60), dockTop - gripH);
+        _list.SetBounds(L - P(3), y - P(3), R - L + P(6), listBottom - (y - P(3)));
+        _grip.SetBounds(L, listBottom, R - L, gripH);
+        _dock.SetBounds(L, listBottom + gripH, R - L, Math.Max(_dock.BarH, bottom - listBottom - gripH));
         LayoutFooter();
         // корень рисует шапку и подвал — целиком перерисовывать его нужно, только если изменились размер или DPI;
         // участки фона, открывшиеся после сдвига кнопок и панелей, Windows перерисует сама
@@ -782,36 +831,67 @@ internal sealed class MainForm : Form
     {
         int P(float x) => v.Px(x);
         int W = v.Width, H = v.Height;
-
-        // шапка
-        Theme.Slime(g, new RectangleF(P(22), P(15), P(56), P(49)), Theme.Pink);
-        int tx = P(92);
-        Theme.Text(g, "SLIME RANCHER 2", Theme.Section, new Rectangle(tx, P(14), P(260), P(18)), Theme.Hint);
-        var ts = Theme.Measure("Менеджер модов", Theme.Title);
-        Theme.Text(g, "Менеджер модов", Theme.Title, new Rectangle(tx - P(1), P(29), ts.Width + P(4), P(36)), Theme.Navy);
-        var vb = Theme.Pill(g, tx + ts.Width + P(10), P(37), P(22), "v" + AppVersion, Theme.SmallBold, Theme.Beige, Theme.NavySoft);
-        Theme.HGradient(g, new RectangleF(tx, P(67), P(132), P(4)), Theme.Teal, Theme.Pink);
-
+        var design = Theme.Design;
         int right = W - P(22);
-        // игра
+
+        // справа — игра и плагин (рисуются первыми: их ширина ограничивает строку сведений)
+        int chipH = design == DesignKind.Compact ? P(28) : P(30);
+        int chipY = design == DesignKind.Compact ? (P(Theme.Spec.HeaderH) - chipH) / 2 : design == DesignKind.Fluent ? P(14) : P(20);
         bool run = _m.GameRunning;
         string gtxt = run ? "Игра запущена" + (_m.GameStarted.HasValue ? " · " + Theme.Ago(DateTime.Now - _m.GameStarted.Value) : "") : "Игра не запущена";
-        var gr = Chip(g, v, right, P(20), gtxt, run ? Theme.TealTint : Theme.Paper, run ? Theme.TealText : Theme.NavySoft, run ? Theme.Teal : Theme.LineDark, run ? (Color?)null : Theme.Line, run);
+        var gr = Chip(g, v, right, chipY, chipH, gtxt, run ? Theme.TealTint : Theme.Paper, run ? Theme.TealText : Theme.NavySoft, run ? Theme.Teal : Theme.LineDark, run ? (Color?)null : Theme.Line, run);
         v.AddTip(gr, "game", run ? "Пока игра запущена, DLL модов заняты — изменения можно только запланировать" : "Можно менять моды и запускать игру");
-        // плагин
         string ptxt; Color pbg, pfg, pdot; Color? pborder = null; string ptip;
         if (_m.PluginStaged) { ptxt = "Плагин обновится после игры"; pbg = Theme.BlueTint; pfg = Theme.BlueText; pdot = Theme.Blue; ptip = "Новая версия плагина ждёт в ModManager\\update и встанет, когда игра закроется"; }
         else if (string.IsNullOrEmpty(_m.PluginVersion)) { ptxt = "Плагин не установлен"; pbg = Theme.CoralTint; pfg = Theme.CoralText; pdot = Theme.Coral; ptip = "Нет Plugins\\SR2ModManager.dll — панель F5 в игре не работает"; }
         else { ptxt = "Плагин в игре v" + _m.PluginVersion; pbg = Theme.Paper; pfg = Theme.NavySoft; pdot = Theme.Teal; pborder = Theme.Line; ptip = "Панель модов в игре — клавиша F5 (меняется в MelonPreferences.cfg)"; }
-        var pr = Chip(g, v, gr.X - P(8), P(20), ptxt, pbg, pfg, pdot, pborder, false);
+        var pr = Chip(g, v, gr.X - P(8), chipY, chipH, ptxt, pbg, pfg, pdot, pborder, false);
         v.AddTip(pr, "plugin", ptip);
-        // строка версий
+
+        // строка сведений: моды, доступные, версии MelonLoader и игры
         var parts = new List<string> { Theme.Count(_m.Mods.Count, "мод", "мода", "модов") };
         if (_m.Available.Count > 0) parts.Add("доступно для установки: " + _m.Available.Count);
         if (_m.Log != null && _m.Log.LoaderVersion.Length > 0) parts.Add("MelonLoader " + _m.Log.LoaderVersion.Replace(" Open-Beta", ""));
         if (_m.Log != null && _m.Log.GameVersion.Length > 0) parts.Add("игра " + _m.Log.GameVersion);
         string info = string.Join("  ·  ", parts);
-        Theme.Text(g, info, Theme.Small, new Rectangle(vb.Right + P(20), P(58), right - vb.Right - P(20), P(18)), Theme.Hint, TextFormatFlags.Right);
+        const string title = "Менеджер модов";
+
+        switch (design)
+        {
+            case DesignKind.Compact:
+            {   // одна плотная строка: слайм, заголовок с версией, под ним — сведения
+                Theme.Slime(g, new RectangleF(P(22), P(15), P(36), P(31)), Theme.Pink);
+                int tx = P(70);
+                var ts = Theme.Measure(title, Theme.H2);
+                Theme.Text(g, title, Theme.H2, new Rectangle(tx - P(1), P(7), ts.Width + P(4), P(28)), Theme.Navy);
+                Theme.Pill(g, tx + ts.Width + P(8), P(11), P(20), "v" + AppVersion, Theme.SmallBold, Theme.Beige, Theme.NavySoft);
+                Theme.Text(g, "SLIME RANCHER 2  ·  " + info, Theme.Small, new Rectangle(tx, P(35), Math.Max(0, pr.X - P(16) - tx), P(18)), Theme.Hint);
+                break;
+            }
+            case DesignKind.Fluent:
+            {   // как заголовок приложения Windows 11: надзаголовок, заголовок, сведения справа под чипами
+                Theme.Slime(g, new RectangleF(P(22), P(17), P(44), P(38)), Theme.Pink);
+                int tx = P(78);
+                Theme.Text(g, "SLIME RANCHER 2", Theme.Section, new Rectangle(tx, P(14), P(260), P(16)), Theme.Hint);
+                var ts = Theme.Measure(title, Theme.Title);
+                Theme.Text(g, title, Theme.Title, new Rectangle(tx - P(1), P(27), ts.Width + P(4), P(34)), Theme.Navy);
+                var vb = Theme.Pill(g, tx + ts.Width + P(10), P(34), P(22), "v" + AppVersion, Theme.SmallBold, Theme.Beige, Theme.NavySoft);
+                Theme.Text(g, info, Theme.Small, new Rectangle(vb.Right + P(20), P(48), right - vb.Right - P(20), P(18)), Theme.Hint, TextFormatFlags.Right);
+                break;
+            }
+            default:
+            {   // «Слаймовый» — крупный слайм и полоска бирюза → розовый
+                Theme.Slime(g, new RectangleF(P(22), P(15), P(56), P(49)), Theme.Pink);
+                int tx = P(92);
+                Theme.Text(g, "SLIME RANCHER 2", Theme.Section, new Rectangle(tx, P(14), P(260), P(18)), Theme.Hint);
+                var ts = Theme.Measure(title, Theme.Title);
+                Theme.Text(g, title, Theme.Title, new Rectangle(tx - P(1), P(29), ts.Width + P(4), P(36)), Theme.Navy);
+                var vb = Theme.Pill(g, tx + ts.Width + P(10), P(37), P(22), "v" + AppVersion, Theme.SmallBold, Theme.Beige, Theme.NavySoft);
+                Theme.HGradient(g, new RectangleF(tx, P(67), P(132), P(4)), Theme.Teal, Theme.Pink);
+                Theme.Text(g, info, Theme.Small, new Rectangle(vb.Right + P(20), P(58), right - vb.Right - P(20), P(18)), Theme.Hint, TextFormatFlags.Right);
+                break;
+            }
+        }
 
         // подвал
         int ft = H - FooterH;
@@ -820,14 +900,14 @@ internal sealed class MainForm : Form
         Theme.Text(g, "Запуск", Theme.SmallBold, new Rectangle(P(22), ft, P(80), FooterH), Theme.Hint);
     }
 
-    private static Rectangle Chip(Graphics g, Canvas v, int right, int y, string text, Color bg, Color fg, Color dot, Color? border, bool pulse)
+    private static Rectangle Chip(Graphics g, Canvas v, int right, int y, int h, string text, Color bg, Color fg, Color dot, Color? border, bool pulse)
     {
-        int h = v.Px(30);
         var ts = Theme.Measure(text, Theme.ButtonFont);
         int w = ts.Width + v.Px(40);
         var r = new Rectangle(right - w, y, w, h);
-        Theme.FillRound(g, r, h / 2f, bg);
-        if (border.HasValue) Theme.StrokeRound(g, r, h / 2f, border.Value, Math.Max(1f, v.S));
+        float rad = Theme.Radius(h, v.S);
+        Theme.FillRound(g, r, rad, bg);
+        if (border.HasValue) Theme.StrokeRound(g, r, rad, border.Value, Math.Max(1f, v.S));
         float cx = r.X + v.Px(16), cy = r.Y + h / 2f;
         if (pulse) Theme.Dot(g, cx, cy, v.Px(7), Theme.Alpha(dot, 60));
         Theme.Dot(g, cx, cy, v.Px(4), dot);
@@ -1397,6 +1477,11 @@ internal sealed class MainForm : Form
         Menus.Add(menu, "Установить мод из файла…", Theme.GDownload, PickInstall, true, null, "Ctrl+O");
         Menus.Add(menu, "Обновить список", Theme.GRefresh, () => { Reload(true); StartCatalogScan(); Toast(Tone.Ok, "Список обновлён."); }, true, null, "F5");
         Menus.Separator(menu);
+        Menus.Add(menu, "Дизайн окна: «" + Theme.Spec.Name + "»…", Theme.GPalette, () => BeginInvoke(new Action(() => OpenDesignPicker())));
+        Menus.Add(menu, "Следующий дизайн", Theme.GSync, NextDesign, true, null, "Ctrl+Shift+D");
+        Menus.Add(menu, _dock.Collapsed ? "Развернуть нижнюю панель" : "Свернуть нижнюю панель", _dock.Collapsed ? Theme.GChevronUp : Theme.GChevronDown,
+            () => SetDockCollapsed(!_dock.Collapsed), true, null, "Ctrl+J");
+        Menus.Separator(menu);
         Menus.Add(menu, "Экспорт отмеченных модов как набор (JSON / zip)…", Theme.GOpen, () => ExportPreset(null));
         Menus.Add(menu, "Импорт набора из файла…", Theme.GDownload, ImportPreset);
         Menus.Add(menu, "Сохранить бэкап сейвов", Theme.GSave, BackupSavesNow);
@@ -1429,6 +1514,11 @@ internal sealed class MainForm : Form
             "Доступные моды и новые версии ищутся в ModManager\\Library и «Загрузках» (за 60 дней);\n" +
             "  свои папки — «catalogFolders» в profiles.json, «scanDownloads»: false — не смотреть «Загрузки»\n" +
             "Правая кнопка по набору — переименовать, перезаписать, ярлык\n\n" +
+            "Дизайн: «Компактный», «Fluent» или «Слаймовый» — кнопка «Дизайн», Ctrl+Shift+D — следующий;\n" +
+            "  выбор, вкладка и высота нижней панели хранятся в UserData\\ModManager\\ui.json\n" +
+            "В таблице щелчок по заголовку колонки — сортировка (ещё щелчок — обратно, третий — без сортировки)\n" +
+            "Нижняя панель: Ctrl+1 — «Проблемы», Ctrl+2 — «Хуки Harmony», Ctrl+3 — «Логи», Ctrl+4 — «Детали»\n" +
+            "  (или двойной щелчок по моду), Ctrl+J — свернуть или развернуть, высота — потянуть за полоску над панелью\n\n" +
             "В игре: F5 — панель модов (" + (string.IsNullOrEmpty(_m.PluginVersion) ? "плагин не установлен" : "плагин v" + _m.PluginVersion) + ").", Tone.Neutral);
     }
 
@@ -1481,8 +1571,14 @@ internal sealed class MainForm : Form
             }
             catch { }
         }
+        // вкладка «Логи» — хвост Latest.log, пока игра пишет журнал (проверка — размер и время файла)
+        if (_tick % 2 == 0 && LoadLogTail())
+        {
+            RefreshDock();
+            if (_dock.Active == DockTab.Logs) SyncDockTools();
+        }
         if (_toastUntil != default && DateTime.Now >= _toastUntil) { _toastUntil = default; UpdateStatus(); }
-        if (_tick % 20 == 0 || running) _root.Invalidate(new Rectangle(_root.Width / 2, 0, _root.Width / 2, _root.Px(84)));
+        if (_tick % 20 == 0 || running) _root.Invalidate(new Rectangle(_root.Width / 2, 0, _root.Width / 2, _root.Px(Theme.Spec.HeaderH)));
     }
 
     private void OnFs(object? sender, FileSystemEventArgs e)
@@ -1533,6 +1629,12 @@ internal sealed class MainForm : Form
             case Keys.Control | Keys.Enter: Commit(true); return true;
             case Keys.Control | Keys.S: if (_apply.Enabled) Commit(false); return true;
             case Keys.Control | Keys.O: PickInstall(); return true;
+            case Keys.Control | Keys.Shift | Keys.D: NextDesign(); return true;
+            case Keys.Control | Keys.J: SetDockCollapsed(!_dock.Collapsed); return true;
+            case Keys.Control | Keys.D1: case Keys.Control | Keys.NumPad1: ShowDockTab(DockTab.Problems, true); return true;
+            case Keys.Control | Keys.D2: case Keys.Control | Keys.NumPad2: ShowDockTab(DockTab.Hooks, true); return true;
+            case Keys.Control | Keys.D3: case Keys.Control | Keys.NumPad3: ShowDockTab(DockTab.Logs, true); return true;
+            case Keys.Control | Keys.D4: case Keys.Control | Keys.NumPad4: ShowDockTab(DockTab.Details, true); return true;
             case Keys.Escape:
                 // в поиске: первый Esc стирает запрос, второй — возвращает к списку; вне поиска — просто стирает
                 if (_search.IsFocused) { if (_search.Text.Length > 0) _search.Text = ""; else FocusList(); return true; }
@@ -1777,7 +1879,7 @@ internal sealed class MainForm : Form
     }
 
     /// Подпись того, что рисует корень (шапка): перерисовывать его, только когда она изменилась.
-    private string RootSig() => string.Join("|", _m.GameRunning, _m.GameStarted?.Ticks ?? 0, _m.PluginStaged, _m.PluginVersion,
+    private string RootSig() => string.Join("|", Theme.Generation, _m.GameRunning, _m.GameStarted?.Ticks ?? 0, _m.PluginStaged, _m.PluginVersion,
         _m.Mods.Count, _m.Available.Count, _m.Log?.LoaderVersion, _m.Log?.GameVersion);
 
     // ───────── журналы MelonLoader ─────────
@@ -2128,6 +2230,8 @@ internal sealed class MainForm : Form
         Application.DoEvents();
         using var bmp = new Bitmap(_root.Width, _root.Height, PixelFormat.Format24bppRgb);
         _root.DrawToBitmap(bmp, new Rectangle(0, 0, _root.Width, _root.Height));
+        // DrawToBitmap рисует дочерние элементы в обратном порядке слоёв — всплывающую панель дизайна дорисовать сверху
+        if (_renderPicker != null) _renderPicker.DrawToBitmap(bmp, _renderPicker.Bounds);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(png)) ?? ".");
         bmp.Save(png, ImageFormat.Png);
     }
