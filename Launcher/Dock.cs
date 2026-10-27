@@ -359,8 +359,13 @@ internal sealed class RowsView : Canvas
     public bool StickToEnd;            // держать прокрутку у конца, если она уже там (журнал)
     public int LeadW;                  // ширина столбца Lead, px при 96 dpi (0 — нет столбца)
     public int TitleW;                 // ширина столбца заголовка, px при 96 dpi (0 — по тексту)
-    public string EmptyTitle = "", EmptyText = "";
-    public bool EmptyHappy;
+    // Заглушка пустого списка. Смена текста сразу перерисовывает панель: фоновая проверка совместимости
+    // часто заканчивается без новых строк, и без перерисовки на вкладке оставалось «Идёт проверка…».
+    public string EmptyTitle { get => _emptyTitle; set => SetEmpty(ref _emptyTitle, value ?? ""); }
+    public string EmptyText { get => _emptyText; set => SetEmpty(ref _emptyText, value ?? ""); }
+    public bool EmptyHappy { get => _emptyHappy; set { if (_emptyHappy == value) return; _emptyHappy = value; if (_rows.Count == 0) Invalidate(); } }
+    private string _emptyTitle = "", _emptyText = "";
+    private bool _emptyHappy;
     public event Action<Row>? RowClicked;
     public event Action<Row>? RowActivated;   // двойной щелчок или Enter
     public Func<Row, string?>? ModName;       // подпись пункта меню «Перейти к …»
@@ -552,6 +557,13 @@ internal sealed class RowsView : Canvas
         }
         int idx = i;
         AddHit(Rectangle.Intersect(r, ClientRectangle), key, () => SelectIndex(idx, true), row.Tip, pt => Menu(idx, pt), false);
+    }
+
+    private void SetEmpty(ref string field, string value)
+    {
+        if (field == value) return;
+        field = value;
+        if (_rows.Count == 0) Invalidate();
     }
 
     private void DrawEmpty(Graphics g)
