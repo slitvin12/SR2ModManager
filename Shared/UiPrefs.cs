@@ -19,8 +19,8 @@ public enum DesignKind { Compact = 0, Fluent = 1, Slime = 2 }
 /// Колонки таблицы модов (стиль «Компактный»). None — без сортировки: порядок, как его строит каталог.
 public enum ModColumn { None = 0, Check, Name, Version, Author, Compat, Hooks, Update, Size }
 
-/// Вкладки нижней панели.
-public enum DockTab { Problems = 0, Hooks = 1, Logs = 2, Details = 3 }
+/// Вкладки нижней панели. Changes — «Изменения»: что включится и выключится после «Применить».
+public enum DockTab { Problems = 0, Hooks = 1, Logs = 2, Details = 3, Changes = 4 }
 
 public sealed class UiPrefs
 {
@@ -29,7 +29,7 @@ public sealed class UiPrefs
     [JsonPropertyName("design")] public string? Design { get; set; } = "compact";
     [JsonPropertyName("sort")] public string? Sort { get; set; } = "";
     [JsonPropertyName("sortDesc")] public bool SortDesc { get; set; }
-    [JsonPropertyName("dockTab")] public string? Dock { get; set; } = "details";
+    [JsonPropertyName("dockTab")] public string? Dock { get; set; } = "problems";
     /// Высота нижней панели в пикселях при 96 dpi; 0 — по умолчанию (доля высоты окна).
     [JsonPropertyName("dockHeight")] public int DockHeight { get; set; }
     [JsonPropertyName("dockCollapsed")] public bool DockCollapsed { get; set; }
@@ -39,7 +39,7 @@ public sealed class UiPrefs
 
     [JsonIgnore] public DesignKind DesignKind { get => ParseDesign(Design) ?? DesignKind.Compact; set => Design = Key(value); }
     [JsonIgnore] public ModColumn SortColumn { get => ParseColumn(Sort); set => Sort = value == ModColumn.None ? "" : Key(value); }
-    [JsonIgnore] public DockTab DockTab { get => ParseDock(Dock) ?? DockTab.Details; set => Dock = Key(value); }
+    [JsonIgnore] public DockTab DockTab { get => ParseDock(Dock) ?? DockTab.Problems; set => Dock = Key(value); }
 
     public static string PathIn(string configDir) => Path.Combine(configDir, FileName);
 
@@ -93,7 +93,7 @@ public sealed class UiPrefs
     public UiPrefs Clone() => (UiPrefs)MemberwiseClone();
 
     public static string Key(DesignKind d) => d switch { DesignKind.Fluent => "fluent", DesignKind.Slime => "slime", _ => "compact" };
-    public static string Key(DockTab t) => t switch { DockTab.Problems => "problems", DockTab.Hooks => "hooks", DockTab.Logs => "logs", _ => "details" };
+    public static string Key(DockTab t) => t switch { DockTab.Problems => "problems", DockTab.Hooks => "hooks", DockTab.Logs => "logs", DockTab.Changes => "changes", _ => "details" };
     public static string Key(ModColumn c) => c == ModColumn.None ? "" : c.ToString().ToLowerInvariant();
 
     /// Название стиля по-английски, по-русски, буквой варианта (C/A/B) или числом; null — не распознано.
@@ -121,8 +121,9 @@ public sealed class UiPrefs
         {
             case "problems": case "проблемы": return DockTab.Problems;
             case "hooks": case "harmony": case "хуки": return DockTab.Hooks;
-            case "logs": case "log": case "логи": return DockTab.Logs;
+            case "logs": case "log": case "логи": case "журнал": return DockTab.Logs;
             case "details": case "детали": return DockTab.Details;
+            case "changes": case "изменения": return DockTab.Changes;
             default: return null;
         }
     }

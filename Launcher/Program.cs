@@ -8,9 +8,10 @@
 //   --install <файлы…>        установить .dll/.zip и открыть окно (так же работают файлы, брошенные на exe)
 //   --render <png>            (для проверки) нарисовать окно в PNG без побочных эффектов:
 //                             [--assume-running|--assume-closed] [--width N --height N] [--select id] [--search text] [--toast text] [--drop]
-//                             [--filter 0-4: все, установленные, требуют обновления, отключенные, проблемы]
+//                             [--filter 0-6: все, установленные, требуют обновления, отключенные, проблемы, включённые, каталог]
+//                             [--toggle id[,id…]: переключить отметки модов в памяти — как будто их отметили, но не применили]
 //                             [--catalog <папка>: её моды показываются как найденные в «Загрузках»]
-//                             [--design compact|fluent|slime] [--dock problems|hooks|logs|details] [--dock-collapsed]
+//                             [--design compact|fluent|slime] [--dock problems|hooks|logs|changes|details] [--dock-collapsed]
 //                             [--sort колонка[:asc|:desc]: name, version, author, compat, hooks, update, size] [--picker]
 //                             [--switch-design compact|fluent|slime: после показа сменить стиль на лету]
 //   --bench <json>            (для проверки) замеры: запуск, прокрутка, колесо, переключение мода — окно за экраном,
@@ -30,7 +31,7 @@ namespace SR2ModManager.Launcher;
 internal static class Program
 {
     private static bool _headless;
-    private static readonly string[] Flags = { "--game", "--profile", "--after-exit", "--render", "--width", "--height", "--select", "--filter", "--search", "--toast", "--catalog", "--bench", "--synthetic", "--frames", "--design", "--dock", "--sort", "--switch-design" };
+    private static readonly string[] Flags = { "--game", "--profile", "--after-exit", "--render", "--width", "--height", "--select", "--filter", "--search", "--toast", "--catalog", "--bench", "--synthetic", "--frames", "--design", "--dock", "--sort", "--switch-design", "--toggle" };
 
     [STAThread]
     private static int Main(string[] args)
@@ -136,6 +137,7 @@ internal static class Program
                 Sort = Arg(args, "--sort"),
                 Picker = args.Contains("--picker"),
                 SwitchTo = UiPrefs.ParseDesign(Arg(args, "--switch-design")),
+                Toggle = Arg(args, "--toggle"),
             };
             if (int.TryParse(Arg(args, "--filter"), out int f)) opt.Filter = f;
             using var form = new MainForm(store, null, null, opt);

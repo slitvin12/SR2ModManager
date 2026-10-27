@@ -30,8 +30,8 @@ static class UiTests
         check(Path.GetFileName(path) == "ui.json" && Path.GetDirectoryName(path) == dir, "ui.json — рядом с profiles.json (в папке настроек менеджера)");
 
         var d = UiPrefs.Load(path);
-        check(!File.Exists(path) && d.DesignKind == DesignKind.Compact && d.SortColumn == ModColumn.None && d.DockTab == DockTab.Details
-              && !d.DockCollapsed && d.DockHeight == 0, "нет ui.json — «Компактный», без сортировки, вкладка «Детали», файл не создаётся");
+        check(!File.Exists(path) && d.DesignKind == DesignKind.Compact && d.SortColumn == ModColumn.None && d.DockTab == DockTab.Problems
+              && !d.DockCollapsed && d.DockHeight == 0, "нет ui.json — «Компактный», без сортировки, вкладка «Проблемы», файл не создаётся");
 
         var p = new UiPrefs
         {
@@ -54,7 +54,7 @@ static class UiTests
 
         File.WriteAllText(path, "{ \"design\": \"slime\", \"dockTab\": ");
         var broken = UiPrefs.Load(path);
-        check(broken.DesignKind == DesignKind.Compact && broken.DockTab == DockTab.Details, "битый ui.json — значения по умолчанию, без исключения");
+        check(broken.DesignKind == DesignKind.Compact && broken.DockTab == DockTab.Problems, "битый ui.json — значения по умолчанию, без исключения");
 
         File.WriteAllText(path, "// свой комментарий\n{ \"Design\": \"Слаймовый\", \"sort\": \"нет-такой\", \"sortDesc\": true, \"dockTab\": \"хуки\", \"dockHeight\": 99999, }");
         var odd = UiPrefs.Load(path);
@@ -69,8 +69,12 @@ static class UiTests
               && UiPrefs.ParseDesign("Компактный") == DesignKind.Compact && UiPrefs.ParseDesign("2") == DesignKind.Slime && UiPrefs.ParseDesign("x") == null && UiPrefs.ParseDesign(null) == null,
             "названия стилей: по-английски, по-русски, буквой варианта и числом");
         check(UiPrefs.ParseColumn("Compat") == ModColumn.Compat && UiPrefs.ParseColumn("size") == ModColumn.Size && UiPrefs.ParseColumn("") == ModColumn.None
-              && UiPrefs.ParseColumn("42") == ModColumn.None && UiPrefs.ParseDock("Логи") == DockTab.Logs && UiPrefs.ParseDock("harmony") == DockTab.Hooks && UiPrefs.ParseDock("?") == null,
-            "названия колонок и вкладок");
+              && UiPrefs.ParseColumn("42") == ModColumn.None && UiPrefs.ParseDock("Логи") == DockTab.Logs && UiPrefs.ParseDock("harmony") == DockTab.Hooks && UiPrefs.ParseDock("?") == null
+              && UiPrefs.ParseDock("Изменения") == DockTab.Changes && UiPrefs.ParseDock("changes") == DockTab.Changes && UiPrefs.ParseDock("журнал") == DockTab.Logs,
+            "названия колонок и вкладок (в том числе «Изменения» и «Журнал игры»)");
+        var ch = new UiPrefs { DockTab = DockTab.Changes };
+        ch.Save(path);
+        check(File.ReadAllText(path).Contains("\"dockTab\": \"changes\"") && UiPrefs.Load(path).DockTab == DockTab.Changes, "ui.json: вкладка «Изменения» сохраняется словом");
 
         var c = p.Clone();
         c.DesignKind = DesignKind.Compact;

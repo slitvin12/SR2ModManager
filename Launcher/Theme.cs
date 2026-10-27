@@ -63,7 +63,11 @@ internal static class Theme
     public static Color RowAlt => P.RowAlt;
     public static Color RowHover => P.RowHover;
     public static Color HeaderBg => P.HeaderBg;
+    public static Color Green => P.Green;
+    public static Color OnAccent => P.OnAccent;
     public static bool Dark => P.Dark;
+    /// Плоское окно «Компактного» стиля: верхняя панель, боковая панель, таблица и нижняя панель без скруглений.
+    public static bool Flat => Spec.Flat;
     /// Тёмно-синий «чернильный» цвет слайма и теней — не зависит от палитры (в тёмной теме Navy — светлый текст).
     public static readonly Color Ink = Hex(0x1F2A44);
 
@@ -118,18 +122,22 @@ internal static class Theme
     public static readonly Font H2 = new("Segoe UI Semibold", 13.5f);
     public static readonly Font Title = new("Segoe UI Semibold", 17f);
     public static readonly Font Section = new("Segoe UI Semibold", 8f);
+    public static readonly Font TagFont = new("Segoe UI Semibold", 7.5f);   // метка «изменён» у набора («Компактный»)
+    public static readonly Font Tiny = new("Segoe UI", 6f, FontStyle.Bold);  // буквы на аватаре 18 px («Компактный»)
     public static readonly Font Mono = MakeMono();
+    public static readonly Font MonoSmall = MakeMono(7.5f);   // клавиши-подсказки «Ctrl+K»
+    public static readonly Font MonoCode = MakeMono(8.25f);   // `код` в строках нижней панели
     public static readonly Font Icons = new("Segoe MDL2 Assets", 10f);
     public static readonly Font IconsSmall = new("Segoe MDL2 Assets", 8f);
     public static readonly Font IconsBig = new("Segoe MDL2 Assets", 15f);
     public static readonly bool HasIcons = Icons.Name == "Segoe MDL2 Assets";
 
-    private static Font MakeMono()
+    private static Font MakeMono(float size = 9f)
     {
-        var f = new Font("Consolas", 9f);
+        var f = new Font("Consolas", size);
         if (f.Name == "Consolas") return f;
         f.Dispose();
-        return new Font(FontFamily.GenericMonospace, 9f);
+        return new Font(FontFamily.GenericMonospace, size);
     }
 
     // ───── глифы Segoe MDL2 Assets (с запасным символом, если шрифта нет) ─────
@@ -166,6 +174,9 @@ internal static class Theme
     public static string GSortDown => G("\uE70D", "▼");
     public static string GBug => G("\uEBE8", "!");
     public static string GList => G("\uEA37", "≡");
+    public static string GGrid => G("\uE80A", "▦");
+    public static string GTerminal => G("\uE756", ">_");
+    public static string GPackage => G("\uE7B8", "▤");
 
     // ───── текст ─────
     public const TextFormatFlags Line1 = TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix;
@@ -431,6 +442,157 @@ internal static class Theme
         g.FillPath(lg, p);
     }
 
+    // ───── векторные значки и текст с разметкой («Компактный» стиль) ─────
+
+    /// Линейный значок в квадрате r (координаты — как у 24-px значков Lucide): одинаково чёткий при любом DPI
+    /// и не зависит от шрифта значков. stroke ≤ 0 — толщина по размеру.
+    public static void Icon(Graphics g, VIcon kind, RectangleF r, Color c, float stroke = 0f)
+    {
+        if (kind == VIcon.None || r.Width <= 0 || r.Height <= 0 || c.A == 0) return;
+        float s = Math.Min(r.Width, r.Height), ox = r.X + (r.Width - s) / 2f, oy = r.Y + (r.Height - s) / 2f;
+        if (stroke <= 0f) stroke = Math.Max(1f, s / 11f);
+        float U(float v) => v * s / 24f;
+        PointF Pt(float x, float y) => new(ox + U(x), oy + U(y));
+        var old = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var pen = new Pen(c, stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        using var br = new SolidBrush(c);
+        void Circle(float cx, float cy, float rad) => g.DrawEllipse(pen, ox + U(cx - rad), oy + U(cy - rad), U(rad * 2), U(rad * 2));
+        void Lines(params float[] xy)
+        {
+            var pts = new PointF[xy.Length / 2];
+            for (int i = 0; i < pts.Length; i++) pts[i] = Pt(xy[2 * i], xy[2 * i + 1]);
+            g.DrawLines(pen, pts);
+        }
+        void DotAt(float x, float y) { float d = stroke * 1.45f; g.FillEllipse(br, ox + U(x) - d / 2f, oy + U(y) - d / 2f, d, d); }
+        void Box(float x, float y, float w, float h, float rad)
+        {
+            using var p = RoundRect(new RectangleF(ox + U(x), oy + U(y), U(w), U(h)), U(rad));
+            g.DrawPath(pen, p);
+        }
+        switch (kind)
+        {
+            case VIcon.CircleCheck: Circle(12, 12, 10); Lines(8, 12.3f, 10.8f, 15.1f, 16.2f, 9.4f); break;
+            case VIcon.CircleX: Circle(12, 12, 10); Lines(15, 9, 9, 15); Lines(9, 9, 15, 15); break;
+            case VIcon.CircleDown: Circle(12, 12, 10); Lines(12, 7.5f, 12, 16); Lines(8.4f, 12.6f, 12, 16.2f, 15.6f, 12.6f); break;
+            case VIcon.CircleInfo: Circle(12, 12, 10); Lines(12, 11.2f, 12, 16.4f); DotAt(12, 7.9f); break;
+            case VIcon.Warning:
+                using (var p = new GraphicsPath())
+                {
+                    p.AddLines(new[] { Pt(12, 3.2f), Pt(21.6f, 20f), Pt(2.4f, 20f) });
+                    p.CloseFigure();
+                    g.DrawPath(pen, p);
+                }
+                Lines(12, 9.6f, 12, 13.6f);
+                DotAt(12, 16.7f);
+                break;
+            case VIcon.Branch:   // git-branch: ветка от основной линии
+                Lines(6, 3, 6, 15);
+                Circle(18, 6, 3);
+                Circle(6, 18, 3);
+                g.DrawArc(pen, ox + U(0), oy + U(0), U(18), U(18), 0, 90);
+                break;
+            case VIcon.Play:
+                g.FillPolygon(br, new[] { Pt(6.5f, 4), Pt(20, 12), Pt(6.5f, 20) });
+                g.DrawPolygon(pen, new[] { Pt(6.5f, 4), Pt(20, 12), Pt(6.5f, 20) });
+                break;
+            case VIcon.ChevronDown: Lines(6, 9, 12, 15, 18, 9); break;
+            case VIcon.ChevronUp: Lines(6, 15, 12, 9, 18, 15); break;
+            case VIcon.Undo:     // против часовой стрелки со стрелкой
+                g.DrawArc(pen, ox + U(3), oy + U(3), U(18), U(18), 180, -310);
+                Lines(3, 3.5f, 3, 8.5f, 8, 8.5f);
+                break;
+            case VIcon.Plus: Lines(12, 5, 12, 19); Lines(5, 12, 19, 12); break;
+            case VIcon.Terminal: Box(2, 4, 20, 16, 2.5f); Lines(6.5f, 9.5f, 9.5f, 12, 6.5f, 14.5f); Lines(12, 15, 17, 15); break;
+            case VIcon.Doc:
+                Lines(14, 2.5f, 6, 2.5f, 4.5f, 4, 4.5f, 20, 6, 21.5f, 18, 21.5f, 19.5f, 20, 19.5f, 8, 14, 2.5f);
+                Lines(14, 2.5f, 14, 8, 19.5f, 8);
+                Lines(8, 13, 16, 13); Lines(8, 17, 16, 17); Lines(8, 9, 10, 9);
+                break;
+            case VIcon.Grid: Box(3, 3, 7.5f, 7.5f, 1.2f); Box(13.5f, 3, 7.5f, 7.5f, 1.2f); Box(3, 13.5f, 7.5f, 7.5f, 1.2f); Box(13.5f, 13.5f, 7.5f, 7.5f, 1.2f); break;
+            case VIcon.Download: Lines(12, 3, 12, 15); Lines(7, 10, 12, 15, 17, 10); Lines(3, 15, 3, 19.5f, 4.5f, 21, 19.5f, 21, 21, 19.5f, 21, 15); break;
+            case VIcon.Archive: Box(2, 3, 20, 5, 1); Lines(4, 8, 4, 19.5f, 5.5f, 21, 18.5f, 21, 20, 19.5f, 20, 8); Lines(10, 12, 14, 12); break;
+            case VIcon.Gear:
+                Circle(12, 12, 3.4f);
+                for (int k = 0; k < 8; k++)
+                {
+                    double a = k * Math.PI / 4;
+                    float cx = (float)Math.Cos(a), sy = (float)Math.Sin(a);
+                    Lines(12 + cx * 6.6f, 12 + sy * 6.6f, 12 + cx * 9.6f, 12 + sy * 9.6f);
+                }
+                break;
+            case VIcon.Search: Circle(10.5f, 10.5f, 7); Lines(15.8f, 15.8f, 21, 21); break;
+            case VIcon.Check: Lines(5, 12.5f, 10, 17.5f, 19.5f, 7); break;
+        }
+        g.SmoothingMode = old;
+    }
+
+    private static List<(string Text, int Kind)> RichRuns(string s)
+    {
+        // Kind: 0 — обычный, 1 — **жирный**, 2 — `код`
+        var runs = new List<(string, int)>();
+        var cur = new System.Text.StringBuilder();
+        bool bold = false, code = false;
+        void Flush() { if (cur.Length > 0) { runs.Add((cur.ToString(), code ? 2 : bold ? 1 : 0)); cur.Clear(); } }
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '`') { Flush(); code = !code; continue; }
+            if (!code && s[i] == '*' && i + 1 < s.Length && s[i + 1] == '*') { Flush(); bold = !bold; i++; continue; }
+            cur.Append(s[i]);
+        }
+        Flush();
+        return runs;
+    }
+
+    /// Ширина куска текста с пробелами по краям (MeasureText хвостовые пробелы не считает).
+    private static int RunWidth(string s, Font f) => s.Length == 0 ? 0 : Measure(s + "|", f).Width - Measure("|", f).Width;
+
+    /// Однострочный текст с разметкой: **жирный** и `код` (моноширинный, на плашке). Что не влезло — многоточие.
+    /// Возвращает ширину; g == null — только замер.
+    public static int Rich(Graphics? g, string? s, Font f, Rectangle r, Color c, float scale, Color? strong = null)
+    {
+        if (string.IsNullOrEmpty(s) || r.Width <= 0) return 0;
+        Font bold = ReferenceEquals(f, Small) ? SmallBold : ReferenceEquals(f, Body) ? ButtonFont : f;
+        int pad = (int)Math.Round(4 * scale), chipH = Math.Min(r.Height, (int)Math.Round(16 * scale));
+        int x = r.X;
+        foreach (var (text, kind) in RichRuns(s))
+        {
+            Font rf = kind == 2 ? MonoCode : kind == 1 ? bold : f;
+            int w = RunWidth(text, rf), full = kind == 2 ? w + 2 * pad : w;
+            bool cut = x + full > r.Right;
+            int room = r.Right - x;
+            if (room <= (int)(6 * scale)) break;
+            if (g != null)
+            {
+                if (kind == 2)
+                {
+                    var chip = new Rectangle(x, r.Y + (r.Height - chipH) / 2, cut ? room : full, chipH);
+                    FillRound(g, chip, 3f * scale, Beige);
+                    Text(g, text, rf, new Rectangle(x + pad, r.Y, Math.Max(0, chip.Width - 2 * pad), r.Height), Navy);
+                }
+                else
+                {
+                    // ведущие пробелы TextRenderer не рисует как отступ — сдвигаем сами
+                    string t = text.TrimStart(' ');
+                    int lead = RunWidth(text.Substring(0, text.Length - t.Length), rf);
+                    Text(g, t, rf, new Rectangle(x + lead, r.Y, Math.Max(0, (cut ? room : w + 2) - lead), r.Height), kind == 1 ? strong ?? c : c);
+                }
+            }
+            x += cut ? room : full;
+            if (cut) break;
+        }
+        return x - r.X;
+    }
+
+    /// Клавиша-подсказка («/», «Ctrl+K»): тонкая рамка и моноширинный текст.
+    public static int KeycapW(string text, float scale) => Measure(text, MonoSmall).Width + (int)Math.Round(10 * scale);
+
+    public static void Keycap(Graphics g, Rectangle r, string text, Color border, Color fg, float scale)
+    {
+        StrokeRound(g, r, 3f * scale, border, Math.Max(1f, scale));
+        Text(g, text, MonoSmall, r, fg, TextFormatFlags.HorizontalCenter);
+    }
+
     // ───── мелочи ─────
     public static string Plural(int n, string one, string few, string many)
     {
@@ -453,4 +615,5 @@ internal static class Theme
     }
 }
 
-
+/// Векторные значки (Theme.Icon).
+internal enum VIcon { None, CircleCheck, CircleX, CircleDown, CircleInfo, Warning, Branch, Play, ChevronDown, Undo, Plus, Terminal, Doc, Grid, Download, Archive, Gear, Search, Check, ChevronUp }

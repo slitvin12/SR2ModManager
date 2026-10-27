@@ -320,6 +320,13 @@ internal sealed class IconCache : IDisposable
         {
             if (_paletteGen == Theme.Generation && _palette.Length > 0) return _palette;
             _paletteGen = Theme.Generation;
+            if (Theme.Spec.Flat)
+            {   // «Компактный»: пастельные плашки с почти чёрными буквами — как метки файлов в редакторе кода
+                var ink = Theme.Hex(0x0D0F12);
+                _palette = new[] { 0xFF9BB5, 0xE0A8F5, 0x7EE0C6, 0x9CC3FF, 0xFFD28A, 0xA6E08F, 0xB5C0D8, 0xFFB38A, 0xC7B6FF, 0x8AE3F0, 0xFFE38A, 0xB8E986, 0xD0D4DC, 0xF7A8D8 }
+                    .Select(x => (Theme.Hex(x), ink)).ToArray();
+                return _palette;
+            }
             _palette = new[]
             {
                 (Theme.TealTint, Theme.TealText), (Theme.BlueTint, Theme.BlueText), (Theme.OrangeTint, Theme.OrangeText),

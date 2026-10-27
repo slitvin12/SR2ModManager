@@ -35,6 +35,7 @@ public sealed class CompatIssue
     public string Title = "";             // заголовок в подробностях
     public string Text = "";              // что не так и почему
     public string Fix = "";               // что сделать
+    public string Line = "";              // одной строкой для нижней панели (пусто — заголовок)
     public List<string> Related = new();  // Id других модов (дубликат, конфликт)
     public override string ToString() => $"[{Level}] {Code}: {Title} — {Text}" + (Fix.Length > 0 ? " → " + Fix : "");
 }
@@ -1530,9 +1531,13 @@ public static class CompatChecker
         }
         if (mf.GameVersions.Count > 0 && env.GameVersion.Length > 0 &&
             !mf.GameVersions.Any(v => v.Equals(env.GameVersion, StringComparison.OrdinalIgnoreCase) || v.Equals(env.ShortGameVersion, StringComparison.OrdinalIgnoreCase)))
-            l.Add(Issue(CompatLevel.Error, "game-version", "для SR2 " + mf.GameVersions[0], "Мод для другой версии игры",
+        {
+            var gi = Issue(CompatLevel.Error, "game-version", "для игры " + mf.GameVersions[0], "Мод для другой версии игры",
                 $"MelonGameVersion мода: {string.Join(", ", mf.GameVersions)}, а у вас SR2 {env.ShortGameVersion}. MelonLoader пропустит его при загрузке.",
-                "Найдите версию мода для SR2 " + env.ShortGameVersion + "."));
+                "Найдите версию мода для SR2 " + env.ShortGameVersion + ".");
+            gi.Line = $"Собран для игры {mf.GameVersions[0]} (MelonGameVersion), у вас {env.ShortGameVersion}";
+            l.Add(gi);
+        }
 
         // .NET: под что собран мод и на чём его запустит MelonLoader
         bool dotnetFlagged = false;

@@ -1,5 +1,5 @@
 // MainForm.Dock.cs — дизайн окна и нижняя панель: выбор стиля (UserData\ModManager\ui.json, рядом с profiles.json),
-// вкладки «Проблемы», «Хуки Harmony», «Логи» и «Детали», высота и сворачивание панели, сортировка таблицы по колонкам.
+// вкладки «Проблемы», «Хуки Harmony», «Журнал игры», «Изменения» и «Детали», высота и сворачивание панели, сортировка таблицы по колонкам.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -20,12 +20,13 @@ internal sealed partial class MainForm
     private readonly RowsView _problems = new() { TitleW = 200 };
     private readonly RowsView _hooks = new();
     private readonly RowsView _logs = new() { Mono = true, StickToEnd = true, LeadW = 64 };
+    private readonly RowsView _changes = new() { TitleW = 190 };
     private UiPrefs _ui = new();
     private string _uiPath = "";
     private int _dockDragFrom;
-    private string _dockBadgeSig = "", _problemsSig = "", _hooksSig = "", _logsSig = "";
+    private string _dockBadgeSig = "", _problemsSig = "", _hooksSig = "", _logsSig = "", _changesSig = "";
 
-    // хвост MelonLoader\Latest.log для вкладки «Логи»
+    // хвост MelonLoader\Latest.log для вкладки «Журнал игры»
     private List<LogLine> _logLines = new();
     private (long Len, DateTime Stamp) _logTailKey = (-2, default);
     private int _logErrors, _logWarnings;
@@ -72,9 +73,10 @@ internal sealed partial class MainForm
             SuspendLayout();
             Theme.Retint(this, before, Theme.P);
             _list.ApplyDesign();
+            SyncDesignChrome();
             _rootSig = ""; _chipsSig = ""; _filterSig = ""; _dockBadgeSig = "";
             _rootLayoutKey = default;
-            ApplyView(true);
+            RefreshUi(); // вкладки фильтра у стилей разные («Вкл/Выкл…» и «Установленные…»), строка состояния, панели
             ResumeLayout(false);
             DoLayout();
             _dock.Relayout();
@@ -103,7 +105,7 @@ internal sealed partial class MainForm
 
     private void OpenDesignPicker(Control? anchor = null)
     {
-        anchor ??= _designBtn.Visible ? _designBtn : _more;
+        anchor ??= Flat ? _cmd : _designBtn.Visible ? _designBtn : _more;
         DesignPicker.Show(anchor, k => ApplyDesign(k, true));
     }
 
@@ -178,12 +180,14 @@ internal sealed partial class MainForm
         _details.Framed = false;
         _details.BackColor = Theme.Paper;
         _dock.Add(DockTab.Problems, "Проблемы", "Проблемы", Theme.GWarning, _problems,
-            "Ошибки и предупреждения: окружение, зависимости, конфликты, совместимость, ошибки в журнале (Ctrl+1)");
+            "Ошибки и предупреждения: окружение, зависимости, конфликты, совместимость, ошибки в журнале (Ctrl+1)", VIcon.Warning);
         _dock.Add(DockTab.Hooks, "Хуки Harmony", "Хуки", Theme.GPlug, _hooks,
-            "Какие методы игры патчат включённые моды и где они пересекаются (Ctrl+2)");
-        _dock.Add(DockTab.Logs, "Логи", "Логи", Theme.GDoc, _logs, "Журнал MelonLoader последнего запуска — Latest.log (Ctrl+3)");
+            "Какие методы игры патчат включённые моды и где они пересекаются (Ctrl+2)", VIcon.Branch);
+        _dock.Add(DockTab.Logs, "Журнал игры", "Журнал", Theme.GDoc, _logs, "Журнал MelonLoader последнего запуска — Latest.log (Ctrl+3)", VIcon.Doc);
+        _dock.Add(DockTab.Changes, "Изменения", "Изм.", Theme.GUndo, _changes,
+            "Что изменится после «Применить» или «Играть»: какие моды включатся, какие выключатся (Ctrl+4)", VIcon.Undo);
         _dock.Add(DockTab.Details, "Детали", "Детали", Theme.GInfo, _details,
-            "Подробности выбранного мода: описание, совместимость, зависимости, журнал, файл, старые версии (Ctrl+4 или двойной щелчок по моду)");
+            "Подробности выбранного мода: описание, совместимость, зависимости, журнал, файл, старые версии (Ctrl+5 или двойной щелчок по моду)", VIcon.CircleInfo);
         _dock.SetActive(_ui.DockTab);
         _dock.SetCollapsed(_ui.DockCollapsed);
         _dock.Picked += t => ShowDockTab(t);
@@ -192,7 +196,7 @@ internal sealed partial class MainForm
         _grip.Dragged += DragDock;
         _grip.DragEnded += SaveUi;
         _grip.Toggle += () => SetDockCollapsed(!_dock.Collapsed);
-        foreach (var v in new[] { _problems, _hooks, _logs })
+        foreach (var v in new[] { _problems, _hooks, _logs, _changes })
         {
             v.RowClicked += r => OnDockRow(r, false);
             v.RowActivated += r => OnDockRow(r, true);
@@ -268,12 +272,13 @@ internal sealed partial class MainForm
         _root.Update();
     }
 
-    /// Высота панели в раскладке: сохранённая (по умолчанию ~38% места под список), не меньше 150 px, список — не меньше 140 px.
+    /// Высота панели в раскладке: сохранённая (по умолчанию ~38% места под список, в «Компактном» — треть), не меньше 150 px,
+    /// список — не меньше 140 px.
     private int DockHeightFor(int area)
     {
         if (_dock.Collapsed) return _dock.BarH;
         int P(float v) => _root.Px(v);
-        int want = _ui.DockHeight > 0 ? P(_ui.DockHeight) : area * 38 / 100;
+        int want = _ui.DockHeight > 0 ? P(_ui.DockHeight) : area * (Flat ? 336 : 380) / 1000;
         int max = area - P(10) - P(140);
         return Math.Max(_dock.BarH, Math.Min(Math.Max(want, P(150)), max));
     }
@@ -282,12 +287,16 @@ internal sealed partial class MainForm
     private void SyncDockTools()
     {
         var tools = new List<DockPanel.Tool>();
-        string note = "", noteTip = "";
+        string note = "", noteTip = "", noteShort = "";
         switch (_dock.Active)
         {
             case DockTab.Problems:
                 tools.Add(new DockPanel.Tool { Key = "recheck", Text = "Проверить снова", Glyph = Theme.GRefresh, Tip = "Заново прочитать DLL модов и окружение (MelonLoader, Unity, .NET, библиотеки)", Act = () => { StartCompatCheck(); Toast(Tone.Info, "Проверка совместимости запущена."); } });
-                if (_m.Env != null) { note = "Проверено: " + _m.Env.Summary; noteTip = note; }
+                if (_m.Env is { } env)
+                {
+                    note = "Проверено: " + env.Summary; noteTip = note;
+                    noteShort = "Проверено: " + (env.LoaderInstalled ? "ML " + env.LoaderShort : "без MelonLoader") + (env.GameVersion.Length > 0 ? " · игра " + env.ShortGameVersion : "");
+                }
                 else if (_m.CompatBusy) note = "Идёт проверка совместимости…";
                 break;
             case DockTab.Hooks:
@@ -300,11 +309,28 @@ internal sealed partial class MainForm
                 tools.Add(new DockPanel.Tool { Key = "lopen", Text = "Открыть файл", Glyph = Theme.GOpen, Tip = _store.MelonLogPath, Act = OpenLogs });
                 (note, noteTip) = LogNote();
                 break;
+            case DockTab.Changes:
+            {
+                bool run = _m.GameRunning, plan = PendingDiff().Count > 0;
+                int n = _m.ChangeCount;
+                if (run ? Dirty() : n > 0)
+                    tools.Add(new DockPanel.Tool { Key = "capply", Text = run ? "Запланировать" : "Применить", Glyph = run ? Theme.GClock : Theme.GSave, Tip = _apply.Tip ?? "", Act = () => Commit(false) });
+                if (n > 0 || plan)
+                    tools.Add(new DockPanel.Tool { Key = "creset", Text = "Сбросить все", Glyph = Theme.GUndo, Tip = "Вернуть отметки как в папке Mods" + (plan ? " и отменить запланированное" : ""), Act = ResetChanges });
+                if (n > 0)
+                {
+                    (note, noteShort) = run ? (plan && !Dirty() ? ("Запланировано на следующий запуск игры", "До следующего запуска")
+                                                                : ("Игра запущена — изменения можно только запланировать", "Только запланировать"))
+                                            : ("Применятся по «Применить» (Ctrl+S) или «Играть» (Ctrl+Enter)", "Ctrl+S — применить");
+                }
+                break;
+            }
         }
-        string sig = (int)_dock.Active + "|" + note + "|" + noteTip + "|" + string.Join("|", tools.Select(t => t.Key + (t.On ? "+" : "-") + t.Tip));
+        string sig = (int)_dock.Active + "|" + note + "|" + noteShort + "|" + noteTip + "|" + string.Join("|", tools.Select(t => t.Key + (t.On ? "+" : "-") + t.Tip));
         _dock.Tools.Clear();
         _dock.Tools.AddRange(tools);
         _dock.Note = note;
+        _dock.NoteShort = noteShort;
         _dock.NoteTip = noteTip;
         if (sig != _dockToolsSig) { _dockToolsSig = sig; _dock.Invalidate(); }
     }
@@ -318,9 +344,12 @@ internal sealed partial class MainForm
         int pc = probs.Count(r => !r.Header);
         var hooks = BuildHookRows(out int shared, out bool risky, out int targets);
         SetBadge(DockTab.Problems, pc, errors > 0 ? Tone.Error : Tone.Warn);
-        if (shared > 0) SetBadge(DockTab.Hooks, shared, risky ? Tone.Warn : Tone.Info);
+        // «Компактный», как в макете: у вкладки хуков счётчика нет — конфликты и так видны в «Проблемах» и в таблице
+        if (Flat) SetBadge(DockTab.Hooks, 0, Tone.Neutral);
+        else if (shared > 0) SetBadge(DockTab.Hooks, shared, risky ? Tone.Warn : Tone.Info);
         else SetBadge(DockTab.Hooks, targets, Tone.Neutral);
         SetBadge(DockTab.Logs, _logErrors, Tone.Error);
+        SetBadge(DockTab.Changes, _m.ChangeCount, Tone.Neutral);
         string bs = string.Join("|", _dock.Tabs.Select(t => t.Badge + "#" + (int)t.Tone));
         if (bs != _dockBadgeSig) { _dockBadgeSig = bs; _dock.Invalidate(); }
         if (_dock.Collapsed) return;
@@ -329,6 +358,7 @@ internal sealed partial class MainForm
             case DockTab.Problems: SetRowsIfChanged(_problems, probs, ref _problemsSig, false); SyncProblemsEmpty(); break;
             case DockTab.Hooks: SetRowsIfChanged(_hooks, hooks, ref _hooksSig, false); break;
             case DockTab.Logs: RefreshDockPage(DockTab.Logs); break;
+            case DockTab.Changes: SetRowsIfChanged(_changes, BuildChangeRows(), ref _changesSig, false); SyncDockTools(); break;
         }
     }
 
@@ -348,6 +378,9 @@ internal sealed partial class MainForm
             case DockTab.Logs:
                 SetRowsIfChanged(_logs, BuildLogRows(), ref _logsSig, resetScroll);
                 break;
+            case DockTab.Changes:
+                SetRowsIfChanged(_changes, BuildChangeRows(), ref _changesSig, resetScroll);
+                break;
         }
     }
 
@@ -358,6 +391,7 @@ internal sealed partial class MainForm
         if (_dock.Active == DockTab.Hooks) RefreshDockPage(DockTab.Hooks, _ui.HooksSelectedOnly);
         else if (_dock.Active == DockTab.Logs) RefreshDockPage(DockTab.Logs, _ui.LogSelectedOnly);
         else if (_dock.Active == DockTab.Problems) RefreshDockPage(DockTab.Problems);
+        else if (_dock.Active == DockTab.Changes) RefreshDockPage(DockTab.Changes);
     }
 
     private void SetBadge(DockTab id, int n, Tone tone)
@@ -372,7 +406,12 @@ internal sealed partial class MainForm
     {
         var sb = new StringBuilder(rows.Count * 24);
         foreach (var r in rows)
-            sb.Append(r.Key).Append('\u0001').Append(r.Text).Append('\u0001').Append(r.Title).Append('\u0001').Append(r.Badge).Append(r.Mark ? '*' : '-').Append((int)r.Tone).Append('\u0002');
+        {
+            sb.Append(r.Key).Append('\u0001').Append(r.Text).Append('\u0001').Append(r.Title).Append('\u0001').Append(r.Badge).Append(r.Mark ? '*' : '-').Append((int)r.Tone)
+              .Append('\u0001').Append((int)r.Icon).Append(r.Rich ? 'R' : '-');
+            if (r.Actions != null) foreach (var a in r.Actions) sb.Append('\u0003').Append(a.Text);
+            sb.Append('\u0002');
+        }
         string s = sb.ToString();
         if (s == sig && !resetScroll) return;
         sig = s;
@@ -399,6 +438,7 @@ internal sealed partial class MainForm
 
     private List<RowsView.Row> BuildProblemRows(out int errors)
     {
+        if (Flat) return BuildFlatProblemRows(out errors);
         var rows = new List<RowsView.Row>();
         errors = 0;
         string? sel = _list.SelectedId;
@@ -440,6 +480,254 @@ internal sealed partial class MainForm
                 });
             }
         }
+        return rows;
+    }
+
+    // «Компактный»: плоский список без заголовков разделов — у строки значок, о чём речь и кнопки «что сделать».
+    // Конфликт хуков двух модов — одна строка «A ↔ B», а не по строке у каждого.
+
+    private static readonly HashSet<string> WontLoad = new(StringComparer.Ordinal)
+        { "unhollower", "legacy-info", "loader-newer", "verify-loader", "other-game", "mono-only", "platform", "process", "game-version", "dotnet-newer", "loader-older-broken" };
+    private static readonly HashSet<string> MayBreak = new(StringComparer.Ordinal)
+        { "loader-newer-patch", "netfx", "interop-older", "harmony-older", "lib-older", "desktop-lib", "framework-missing" };
+
+    /// Коротко, что не так: заголовок проблемы и чем это грозит (подробности — в подсказке и во вкладке «Детали»).
+    private static string FlatIssueText(CompatIssue i)
+        => (i.Line.Length > 0 ? i.Line : i.Title) + (WontLoad.Contains(i.Code) ? " — не загрузится" : MayBreak.Contains(i.Code) ? " — может не работать" : "");
+
+    private static string OneLine(string s)
+    {
+        s = s.Replace("\r", " ").Replace("\n", " ").Trim();
+        return s.Length > 160 ? s.Substring(0, 160) + "…" : s;
+    }
+
+    /// Действие над модом по Id — к моменту щелчка список модов мог перечитаться.
+    private Action ForMod(string id, Action<ModEntry> f) => () => { var x = _m.Find(id); if (x != null) f(x); };
+
+    private void ShowDetailsOf(ModEntry m)
+    {
+        SelectAnywhere(m.Id);
+        ShowDockTab(DockTab.Details);
+    }
+
+    /// «Журнал игры» только со строками этого мода.
+    private void ShowLogFor(ModEntry m)
+    {
+        SelectAnywhere(m.Id);
+        if (!_ui.LogSelectedOnly) { _ui.LogSelectedOnly = true; SaveUi(); }
+        ShowDockTab(DockTab.Logs, true);
+    }
+
+    /// «Хуки Harmony» только с методами этого мода.
+    private void ShowHooksOf(ModEntry m)
+    {
+        SelectAnywhere(m.Id);
+        if (!_ui.HooksSelectedOnly) { _ui.HooksSelectedOnly = true; SaveUi(); }
+        ShowDockTab(DockTab.Hooks, true);
+    }
+
+    private void DisableOneMenu(string a, string b)
+    {
+        var menu = Menus.Create(this);
+        foreach (var id in new[] { a, b })
+        {
+            var m = _m.Find(id);
+            if (m == null || !_m.On(m.Id)) continue;
+            Menus.Add(menu, "Выключить «" + m.DisplayName + "»", Theme.GCancel, ForMod(m.Id, Toggle));
+        }
+        if (menu.Items.Count == 0) { menu.Dispose(); return; }
+        menu.Show(Cursor.Position);
+    }
+
+    private List<RowsView.Row> BuildFlatProblemRows(out int errors)
+    {
+        int err = 0;
+        string? sel = _list.SelectedId;
+        bool IsSel(string? id) => sel != null && id != null && id.Equals(sel, StringComparison.OrdinalIgnoreCase);
+        var items = new List<(int Rank, string Sort, RowsView.Row Row)>();
+        void Add(int rank, string sort, string key, Tone tone, VIcon icon, string title, string text, string tip, string? modId,
+            List<(string, Action)> acts, bool rich = false, bool mark = false)
+        {
+            if (tone == Tone.Error) err++;
+            items.Add((rank, sort, new RowsView.Row
+            {
+                Key = key, Icon = icon, Glyph = tone == Tone.Error ? Theme.GError : Theme.GWarning, Tone = tone,
+                Title = title, Text = text, Rich = rich, ModId = modId, Mark = mark || IsSel(modId),
+                Tip = tip, Copy = title + ": " + text.Replace("**", "").Replace("`", ""), Actions = acts.Count > 0 ? acts : null,
+            }));
+        }
+
+        // окружение — общее для всех модов
+        foreach (var i in _m.Env?.Issues.Where(i => i.Level >= CompatLevel.Warning).OrderByDescending(i => i.Level) ?? Enumerable.Empty<CompatIssue>())
+        {
+            var tone = i.Level == CompatLevel.Error ? Tone.Error : Tone.Warn;
+            var acts = new List<(string, Action)>();
+            var issue = i;
+            if (i.Code.StartsWith("prefs", StringComparison.Ordinal))
+                acts.Add(("Показать файл", () => Report(Shell.Reveal(Path.Combine(_store.UserDataDir, "MelonPreferences.cfg")))));
+            if (i.Code.StartsWith("game-asm", StringComparison.Ordinal) || i.Code.StartsWith("loader", StringComparison.Ordinal) && i.Code != "loader-missing")
+                acts.Add(("Журнал", () => ShowDockTab(DockTab.Logs, true)));
+            if (i.Fix.Length > 0) acts.Add(("Что сделать", () => Toast(Tone.Info, EnvArea(issue) + ": " + issue.Fix)));
+            Add(tone == Tone.Error ? -2 : -1, EnvArea(i), "env:" + i.Code + ":" + i.Title, tone, tone == Tone.Error ? VIcon.CircleX : VIcon.Warning,
+                EnvArea(i), i.Title + (i.Text.Length > 0 ? " — " + i.Text : ""), IssueTip(i), null, acts);
+        }
+
+        var pairs = new Dictionary<string, (ModEntry A, ModEntry B, CompatIssue I)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in _m.Mods)
+        {
+            string id = m.Id, name = m.DisplayName;
+            foreach (var (badge, text, tone) in _m.ProblemDetails(m))
+            {
+                var acts = new List<(string, Action)>();
+                if (!m.Readable)
+                {
+                    acts.Add(("Показать файл", ForMod(id, x => Report(Shell.Reveal(x.Path)))));
+                    acts.Add(("Удалить", ForMod(id, DeleteMod)));
+                }
+                else if (badge.StartsWith("нужен ", StringComparison.Ordinal)) acts.Add(("Включить нужные", FixDeps));
+                else if (badge.StartsWith("нет «", StringComparison.Ordinal))
+                {
+                    var dep = m.DependsOn.Where(d => badge == $"нет «{d}»").Select(d => _m.FindAny(d)).FirstOrDefault(x => x != null && x.Available);
+                    if (dep != null) { var dd = dep; acts.Add(("Установить " + dd.DisplayName, () => InstallAvailable(dd))); }
+                    else acts.Add(("Подробнее", ForMod(id, ShowDetailsOf)));
+                }
+                else if (badge == "конфликт") acts.Add(("Выключить", ForMod(id, Toggle)));
+                else if (badge.EndsWith(" в логе", StringComparison.Ordinal)) acts.Add(("Открыть журнал", ForMod(id, ShowLogFor)));
+                else acts.Add(("Подробнее", ForMod(id, ShowDetailsOf)));
+                Add(tone == Tone.Error ? 0 : 2, name, "p:" + id + ":" + badge, tone, tone == Tone.Error ? VIcon.CircleX : VIcon.Warning,
+                    name, text, name + ": " + text, id, acts);
+            }
+            foreach (var i in _m.CompatBadges(m))
+            {
+                if (i.Code == "hook-conflict")
+                {
+                    bool paired = false;
+                    foreach (var oid in i.Related)
+                    {
+                        var o = _m.Find(oid);
+                        if (o == null || !HooksClash(m, o)) continue;
+                        paired = true;
+                        var (a, b) = string.Compare(m.Id, o.Id, StringComparison.OrdinalIgnoreCase) <= 0 ? (m, o) : (o, m);
+                        string pk = a.Id + "|" + b.Id;
+                        if (!pairs.ContainsKey(pk)) pairs[pk] = (a, b, i);
+                    }
+                    if (paired) continue;
+                }
+                var tone = i.Level == CompatLevel.Error ? Tone.Error : Tone.Warn;
+                var acts = new List<(string, Action)>();
+                if (tone == Tone.Error && WontLoad.Contains(i.Code))
+                {
+                    if (Uri.TryCreate(m.Link, UriKind.Absolute, out var lu) && (lu.Scheme == Uri.UriSchemeHttps || lu.Scheme == Uri.UriSchemeHttp))
+                    {
+                        string link = m.Link!;
+                        acts.Add(("Найти новую версию", () => Report(Shell.OpenLink(link))));
+                    }
+                    else acts.Add(("Подробнее", ForMod(id, ShowDetailsOf)));
+                    acts.Add(("Удалить", ForMod(id, DeleteMod)));
+                }
+                else acts.Add(("Подробнее", ForMod(id, ShowDetailsOf)));
+                Add(tone == Tone.Error ? 0 : 2, name, "c:" + id + ":" + i.Code + ":" + i.Badge, tone, tone == Tone.Error ? VIcon.CircleX : VIcon.Warning,
+                    name, FlatIssueText(i), name + ": " + IssueTip(i), id, acts);
+            }
+            // предупреждения в журнале прошлого запуска (ошибки уже есть среди проблем мода)
+            var ls = _m.LogFor(m);
+            if (ls != null && ls.Errors == 0 && ls.Warnings > 0)
+            {
+                string text = Theme.Count(ls.Warnings, "предупреждение", "предупреждения", "предупреждений") + " в прошлом запуске"
+                    + (ls.LastWarning.Length > 0 ? ": " + OneLine(ls.LastWarning) : "");
+                Add(2, name, "lw:" + id, Tone.Warn, VIcon.Warning, name, text, name + ": " + text + "\nПодробности — во вкладке «Журнал игры».", id,
+                    new List<(string, Action)> { ("Открыть журнал", ForMod(id, ShowLogFor)) });
+            }
+        }
+        foreach (var (a0, b0, i) in pairs.Values)
+        {
+            var (a, b) = ClashFirst(a0, b0);
+            string aid = a.Id, bid = b.Id;
+            Add(1, a.DisplayName + " " + b.DisplayName, "hc:" + aid + ":" + bid, Tone.Warn, VIcon.Branch, a.DisplayName + " ↔ " + b.DisplayName,
+                ClashText(a, b), a.DisplayName + " и " + b.DisplayName + ": " + IssueTip(i), aid,
+                new List<(string, Action)> { ("Показать хуки", ForMod(aid, ShowHooksOf)), ("Выключить один…", () => DisableOneMenu(aid, bid)) },
+                rich: true, mark: IsSel(bid));
+        }
+        errors = err;
+        return items.OrderBy(x => x.Rank).ThenBy(x => x.Sort, StringComparer.CurrentCultureIgnoreCase).Select(x => x.Row).ToList();
+    }
+
+    private static bool RiskyHook(HookTarget h) => h.SkipsOriginal || h.Kind == "Transpiler";
+
+    /// Первым в паре «A ↔ B» — тот, у кого на общем методе префикс с отменой или транспайлер: он и перехватывает вызов.
+    private (ModEntry, ModEntry) ClashFirst(ModEntry a, ModEntry b)
+    {
+        var shared = SharedHooks(a, b);
+        bool ra = shared.Any(s => s.A.Any(RiskyHook)), rb = shared.Any(s => s.B.Any(RiskyHook));
+        return rb && !ra ? (b, a) : (a, b);
+    }
+
+    /// Общие методы двух модов: ключ → хуки каждого.
+    private List<(string Key, List<HookTarget> A, List<HookTarget> B)> SharedHooks(ModEntry a, ModEntry b)
+    {
+        var fa = ManifestOf(a); var fb = ManifestOf(b);
+        var res = new List<(string, List<HookTarget>, List<HookTarget>)>();
+        if (fa == null || fb == null) return res;
+        var byB = fb.Hooks.Where(h => !h.Dynamic).GroupBy(h => h.Key).ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+        foreach (var g in fa.Hooks.Where(h => !h.Dynamic).GroupBy(h => h.Key))
+            if (byB.TryGetValue(g.Key, out var hb)) res.Add((g.Key, g.ToList(), hb));
+        return res;
+    }
+
+    /// Мешают ли моды друг другу: на общем методе у кого-то из них префикс с отменой или транспайлер (и они не связаны зависимостью).
+    private bool HooksClash(ModEntry a, ModEntry b)
+    {
+        if (a.DependsOn.Contains(b.Id, StringComparer.OrdinalIgnoreCase) || b.DependsOn.Contains(a.Id, StringComparer.OrdinalIgnoreCase)) return false;
+        return SharedHooks(a, b).Any(s => s.A.Any(RiskyHook) || s.B.Any(RiskyHook));
+    }
+
+    /// «Оба патчат `Камера.LateUpdate` и ещё 2 метода: у A префикс с отменой».
+    private string ClashText(ModEntry a, ModEntry b)
+    {
+        var shared = SharedHooks(a, b);
+        if (shared.Count == 0) return "Патчат одни и те же методы игры";
+        var main = shared.FirstOrDefault(s => s.A.Any(RiskyHook) || s.B.Any(RiskyHook));
+        if (main.Key == null) main = shared[0];
+        static string Kind(List<HookTarget> l) => l.Any(h => h.Kind == "Transpiler") ? "транспайлер" : l.Any(h => h.SkipsOriginal) ? "префикс с отменой" : "";
+        string ka = Kind(main.A), kb = Kind(main.B);
+        var who = new List<string>();
+        if (ka.Length > 0 && ka == kb) who.Add("у обоих " + ka);
+        else
+        {
+            if (ka.Length > 0) who.Add("у " + a.DisplayName + " " + ka);
+            if (kb.Length > 0) who.Add("у " + b.DisplayName + " " + kb);
+        }
+        return "Оба патчат `" + main.A[0].Short + "`" + (shared.Count > 1 ? " и ещё " + Theme.Count(shared.Count - 1, "метод", "метода", "методов") : "")
+            + (who.Count > 0 ? ": " + string.Join(", ", who) : "");
+    }
+
+    // ── «Изменения»
+
+    /// Что изменится после «Применить» или «Играть»: моды, у которых отметка не совпадает с папкой Mods.
+    private List<RowsView.Row> BuildChangeRows()
+    {
+        var rows = new List<RowsView.Row>();
+        var pend = PendingDiff();
+        string? sel = _list.SelectedId;
+        foreach (var m in _m.Mods.Where(_m.IsChanged).OrderBy(x => _m.On(x.Id) ? 0 : 1).ThenBy(x => x.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+        {
+            bool on = _m.On(m.Id), planned = pend.TryGetValue(m.Id, out var pv) && pv == on;
+            string id = m.Id;
+            string what = on ? "**включится** — DLL вернётся в Mods" : "**выключится** — DLL уедет в Mods\\Disabled";
+            rows.Add(new RowsView.Row
+            {
+                Key = "ch:" + id, Icon = on ? VIcon.CircleCheck : VIcon.CircleX, Glyph = on ? Theme.GCheck : Theme.GCancel, Tone = on ? Tone.Ok : Tone.Neutral,
+                Title = m.DisplayName, Text = what + (planned ? " · запланировано на следующий запуск" : ""), Rich = true, ModId = id,
+                Mark = sel != null && id.Equals(sel, StringComparison.OrdinalIgnoreCase),
+                Tip = m.DisplayName + (on ? ": включится" : ": выключится") + (planned ? " — запланировано, плагин применит при следующем запуске игры" : _m.GameRunning ? " — после «Запланировать»" : " — после «Применить» или «Играть»"),
+                Copy = m.DisplayName + ": " + (on ? "включится" : "выключится"),
+                Actions = new List<(string, Action)> { ("Отменить", ForMod(id, x => { _m.Sel[x.Id] = x.Enabled; RefreshUi(); })) },
+            });
+        }
+        _changes.EmptyHappy = true;
+        _changes.EmptyTitle = "Изменений нет";
+        _changes.EmptyText = PendingDiff().Count > 0 ? "Запланированное совпадает с отметками — плагин применит его при следующем запуске игры."
+            : "Отметки совпадают с папкой Mods. Включите или выключите моды — здесь появится, что изменится после «Применить» или «Играть».";
         return rows;
     }
 
@@ -563,7 +851,7 @@ internal sealed partial class MainForm
         return rows;
     }
 
-    // ── «Логи»
+    // ── «Журнал игры»
 
     /// Перечитать хвост журнала, если файл изменился (размер или время). true — изменился.
     private bool LoadLogTail(bool force = false)
@@ -668,11 +956,12 @@ internal sealed partial class MainForm
         PlaceRenderPicker();
     }
 
-    /// Под кнопкой «Дизайн», по её правому краю — как всплывающая панель в обычном запуске.
+    /// Под кнопкой «Дизайн» (в «Компактном» — «Команды»), по её правому краю — как всплывающая панель в обычном запуске.
     private void PlaceRenderPicker()
     {
         if (_renderPicker == null) return;
-        int x = Math.Max(_root.Px(8), _designBtn.Right - _renderPicker.Width);
-        _renderPicker.Location = new Point(x, _designBtn.Bottom + _root.Px(6));
+        Control a = Flat ? _cmd : _designBtn;
+        int x = Math.Max(_root.Px(8), a.Right - _renderPicker.Width);
+        _renderPicker.Location = new Point(x, a.Bottom + _root.Px(6));
     }
 }

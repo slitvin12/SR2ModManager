@@ -1,5 +1,6 @@
 // Designs.cs — три стиля оформления лаунчера. Стиль = палитра + вид списка модов + размеры и скругления:
-//  • «Компактный» (вариант C, по умолчанию) — тёмная плотная таблица (~30 px строка), сортировка по колонкам;
+//  • «Компактный» (вариант C, по умолчанию) — тёмное плоское окно: наборы и разделы слева, таблица (~29 px строка,
+//    сортировка по колонкам), нижняя панель с проблемами и изменениями, строка состояния;
 //  • «Fluent» (вариант A) — светлые карточки средней плотности (~58 px) с описанием и бейджами статуса;
 //  • «Слаймовый» (вариант B) — капсулы в цветах игры: кремовый фон, тёмно-синий текст, бирюза и розовый слайм.
 // Выбор хранится в UserData\ModManager\ui.json и применяется сразу, без перезапуска (Theme.Use + Theme.Retint).
@@ -21,7 +22,9 @@ internal sealed class Palette
         TealTint, CoralTint, OrangeTint, BlueTint, PinkTint, Selected,
         TealText, CoralText, OrangeText, BlueText,
         Mark, ToggleOff, PurpleTint, PurpleText,
-        RowAlt, RowHover, HeaderBg;
+        RowAlt, RowHover, HeaderBg,
+        Green,      // «совместим» в таблице
+        OnAccent;   // текст и значки поверх акцентной заливки (главная кнопка, отметка)
 }
 
 internal enum ListMode { Table, Cards, Capsules }
@@ -39,22 +42,28 @@ internal sealed class DesignSpec
     public int CtrlRadius;    // кнопки, поле поиска, сегменты; −1 — капсула
     public int HeaderH;       // шапка окна
     public bool Shadows;      // мягкие тени у выбранной карточки и главной кнопки
+    /// Плоское окно как у редактора кода: верхняя панель, боковая панель с наборами и разделами, таблица и нижняя
+    /// панель без рамок и скруглений, строка состояния внизу («Компактный»).
+    public bool Flat;
 }
 
 internal static class Designs
 {
     private static Color H(int rgb) => Color.FromArgb(255, (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
 
+    // «Компактный»: строки таблицы — Cream, панели вокруг (верх, бок, шапка таблицы, нижняя панель, строка состояния) —
+    // HeaderBg. Цвета ролей не совпадают между собой — иначе Theme.Retint при смене стиля спутал бы роли.
     public static readonly Palette DarkPalette = new()
     {
         Dark = true,
-        Cream = H(0x15171C), Paper = H(0x1C1F26), Beige = H(0x272B34), BeigeDark = H(0x323743), Line = H(0x2B2F39), LineDark = H(0x3F4552),
-        Navy = H(0xE6E9F0), NavySoft = H(0xA4ACBB), Hint = H(0x767F90),
-        Teal = H(0x1AAE93), TealDark = H(0x24C7A8), Coral = H(0xFF6B5F), Orange = H(0xF2A541), Pink = H(0xFF6FAE), Blue = H(0x5B95F5),
-        TealTint = H(0x16332F), CoralTint = H(0x3B2125), OrangeTint = H(0x382D1C), BlueTint = H(0x1B2A45), PinkTint = H(0x3A1F31), Selected = H(0x1B3431),
-        TealText = H(0x62E0C7), CoralText = H(0xFF9389), OrangeText = H(0xF6BE6E), BlueText = H(0x8FB6FF),
+        Cream = H(0x15171C), Paper = H(0x1C1F26), Beige = H(0x20242B), BeigeDark = H(0x2E333C), Line = H(0x2A2F38), LineDark = H(0x363C47),
+        Navy = H(0xE7E9ED), NavySoft = H(0xAEB5C0), Hint = H(0x7D8592),
+        Teal = H(0x3DD6B0), TealDark = H(0x5FE0C0), Coral = H(0xFF7A7A), Orange = H(0xF2C14E), Pink = H(0xFF9BB5), Blue = H(0x7FB5FF),
+        TealTint = H(0x1F3A34), CoralTint = H(0x3D2328), OrangeTint = H(0x3A3220), BlueTint = H(0x1D2C42), PinkTint = H(0x3A2430), Selected = H(0x1F3A35),
+        TealText = H(0x3DD6B0), CoralText = H(0xFF7A7A), OrangeText = H(0xF2C14E), BlueText = H(0x7FB5FF),
         Mark = H(0x6E5A16), ToggleOff = H(0x3B414D), PurpleTint = H(0x33213B), PurpleText = H(0xE2A8F2),
-        RowAlt = H(0x1F222A), RowHover = H(0x262A34), HeaderBg = H(0x181B21),
+        RowAlt = H(0x15171C), RowHover = H(0x1A1D23), HeaderBg = H(0x1B1E24),
+        Green = H(0x5BD08A), OnAccent = H(0x06261D),
     };
 
     public static readonly Palette FluentPalette = new()
@@ -66,6 +75,7 @@ internal static class Designs
         TealText = H(0x00539F), CoralText = H(0xB3261A), OrangeText = H(0x8A5300), BlueText = H(0x4B3FB0),
         Mark = H(0xFFF1A1), ToggleOff = H(0xC6C6C6), PurpleTint = H(0xF3E8FD), PurpleText = H(0x8A3FB8),
         RowAlt = H(0xFAFAFA), RowHover = H(0xF5F5F5), HeaderBg = H(0xF7F7F7),
+        Green = H(0x0F7B0F), OnAccent = H(0xFFFFFF),
     };
 
     public static readonly Palette SlimePalette = new()
@@ -77,13 +87,14 @@ internal static class Designs
         TealText = H(0x0C7A66), CoralText = H(0xC23B2A), OrangeText = H(0xA45A05), BlueText = H(0x2B5FC4),
         Mark = H(0xFFE38A), ToggleOff = H(0xD9CDB6), PurpleTint = H(0xF6E6F4), PurpleText = H(0x9C3D8E),
         RowAlt = H(0xFBF8F1), RowHover = H(0xF3EEE3), HeaderBg = H(0xEFE6D6),
+        Green = H(0x0C7A66), OnAccent = H(0xFFFFFF),
     };
 
     public static readonly DesignSpec Compact = new()
     {
         Kind = DesignKind.Compact, Name = "Компактный", Variant = "C", Tagline = "Тёмная таблица",
-        Description = "Плотная таблица ~30 px: версия, автор, совместимость, хуки Harmony, обновления и размер. Щелчок по заголовку — сортировка.",
-        Palette = DarkPalette, Mode = ListMode.Table, RowH = 30, Gap = 0, CardRadius = 0, PanelRadius = 8, CtrlRadius = 6, HeaderH = 62, Shadows = false,
+        Description = "Тёмное окно как у редактора кода: наборы и разделы слева, плотная таблица (версия, автор, совместимость, хуки Harmony, обновления, размер), проблемы и изменения внизу.",
+        Palette = DarkPalette, Mode = ListMode.Table, RowH = 29, Gap = 0, CardRadius = 0, PanelRadius = 6, CtrlRadius = 6, HeaderH = 46, Shadows = false, Flat = true,
     };
 
     public static readonly DesignSpec Fluent = new()

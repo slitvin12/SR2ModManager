@@ -338,6 +338,10 @@ try
     var allView = CatalogView.Build(pool, avail0, CatalogFilter.All, ModSearch.Parse(""), isOn, hasUpd, null);
     Check(allView.Last().Id == "NewMod" && CatalogView.Build(pool, avail0, CatalogFilter.Installed, null, isOn, hasUpd, null).All(m => !m.Available), "доступные — после установленных, в «Установленных» их нет");
     Check(CatalogView.Build(pool, avail0, CatalogFilter.Disabled, ModSearch.Parse("rain"), isOn, hasUpd, null).Select(m => m.Id).SequenceEqual(new[] { "Rainbow" }), "фильтр + поиск вместе");
+    int cOn = CatalogView.Count(pool, avail0, CatalogFilter.Enabled, isOn, hasUpd, null);
+    var catView = CatalogView.Build(pool, avail0, CatalogFilter.Catalog, null, isOn, hasUpd, null).Select(m => m.Id).ToList();
+    Check(cOn == 3 && cOn + cOff == cInst && catView.SequenceEqual(new[] { "SlimeLive", "NewMod" }),
+        $"«Вкл» + «Выкл» = установленные ({cOn} + {cOff}); «Каталог и обновления» — моды с новой версией и доступные: {string.Join(", ", catView)}");
 
     // 20. каталог на реальных DLL: новые версии в «Загрузках», новый мод, чужая игра, мусор, старые файлы
     string? RealDll(string name)

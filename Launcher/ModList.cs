@@ -46,6 +46,7 @@ internal sealed class ModList : Canvas
     public string EmptyAction = "";          // кнопка в пустом состоянии ("" — без кнопки)
     public event Action? EmptyActionClick;
     public bool EmptyHappy;
+    public VIcon EmptyIcon;                  // значок пустого состояния в «Компактном» (None — галочка или «i»)
     public IconCache? Icons;
     /// Активная сортировка — для стрелки в шапке таблицы.
     public ModColumn SortColumn { get; private set; }
@@ -126,14 +127,15 @@ internal sealed class ModList : Canvas
 
     private static ListMode Mode => Theme.Spec.Mode;
     private static bool IsTable => Mode == ListMode.Table;
+    private static bool Flat => Theme.Spec.Flat;
     private int CardH => Px(Theme.Spec.RowH);
     private int Gap => Px(Theme.Spec.Gap);
-    private int Pad => IsTable ? Px(1) : Px(3);
+    private int Pad => IsTable ? (Flat ? 0 : Px(1)) : Px(3);
     private int BarW => Px(10);
     /// Заголовок группы «Доступны для установки».
     private int HeaderH => Px(IsTable ? 28 : Mode == ListMode.Cards ? 30 : 34);
     /// Закреплённая шапка колонок таблицы (над прокручиваемыми строками).
-    private int TopH => IsTable && View.Count > 0 ? Px(30) : 0;
+    private int TopH => IsTable && View.Count > 0 ? Px(Flat ? 29 : 30) : 0;
     /// Высота прокручиваемой части.
     private int ViewH => Math.Max(1, Height - TopH);
     private int Pitch => CardH + Gap;
@@ -373,11 +375,14 @@ internal sealed class ModList : Canvas
 
     private List<Column> _cols = new();
     private int _colsW = -1, _colsDpi = -1;
+    private bool _colsFlat;
 
     /// Колонки для ширины строки w (x — от левого края строки).
     private List<Column> Columns(int w)
     {
-        if (w == _colsW && DeviceDpi == _colsDpi && _cols.Count > 0) return _cols;
+        if (w == _colsW && DeviceDpi == _colsDpi && _colsFlat == Flat && _cols.Count > 0) return _cols;
+        _colsFlat = Flat;
+        if (_colsFlat) { _cols = FlatColumns(w); _colsW = w; _colsDpi = DeviceDpi; return _cols; }
         var set = ColDefs.ToList();
         int Fixed() => set.Where(d => d.W > 0).Sum(d => Px(d.W));
         foreach (var h in HideOrder)
@@ -401,6 +406,274 @@ internal sealed class ModList : Canvas
     /// Видимые колонки таблицы (для подсказок и проверок).
     public IReadOnlyList<ModColumn> VisibleColumns => IsTable ? Columns(CardW).Select(c => c.Col).ToList() : Array.Empty<ModColumn>();
 
+    // ───────── таблица «Компактного» стиля ─────────
+
+    // ширина при 96 dpi: 0 — «резиновая» (обновление), -1 — название (четверть ширины, 210…330 px)
+    private static readonly (ModColumn Col, string Title, int W, bool Right, string Tip)[] FlatColDefs =
+    {
+        (ModColumn.Check, "", 36, false, "Включён ли мод"),
+        (ModColumn.Name, "Мод", -1, false, "Название мода"),
+        (ModColumn.Version, "Версия", 78, false, "Версия из метаданных DLL (MelonInfo)"),
+        (ModColumn.Author, "Автор", 170, false, "Автор мода"),
+        (ModColumn.Compat, "Совместимость", 190, false, "Совместимость с MelonLoader, игрой и другими модами; ошибки и предупреждения в журнале"),
+        (ModColumn.Hooks, "Хуки", 62, false, "Сколько методов игры патчит мод через Harmony"),
+        (ModColumn.Update, "Обновление", 0, false, "Новая версия в «Загрузках», Библиотеке или своих папках"),
+        (ModColumn.Size, "Размер", 90, true, "Размер файла DLL"),
+    };
+
+    /// Наименьшая ширина колонки «Компактного» стиля: название, автор, совместимость и обновление сначала ужимаются
+    /// (автор — с многоточием), и только если и так не влезает — колонки прячутся по HideOrder.
+    private int FlatMin(ModColumn col, int w) => col switch
+    {
+        ModColumn.Name => Px(NameMin),
+        ModColumn.Author => Px(110),
+        ModColumn.Compat => Px(160),
+        ModColumn.Update => Px(90),
+        _ => Px(w),
+    };
+
+    private List<Column> FlatColumns(int w)
+    {
+        var set = FlatColDefs.ToList();
+        foreach (var h in HideOrder)
+        {
+            if (set.Sum(d => FlatMin(d.Col, d.W)) <= w) break;
+            set.RemoveAll(d => d.Col == h);
+        }
+        // от минимумов: остаток — названию (до четверти ширины, не больше 330), совместимости и автору до обычной ширины,
+        // всё прочее — «Обновлению» (а без него — названию)
+        var width = set.ToDictionary(d => d.Col, d => FlatMin(d.Col, d.W));
+        int spare = w - width.Values.Sum();
+        void Grow(ModColumn col, int target)
+        {
+            if (spare <= 0 || !width.TryGetValue(col, out int cur)) return;
+            int add = Math.Min(spare, Math.Max(0, target - cur));
+            width[col] = cur + add;
+            spare -= add;
+        }
+        Grow(ModColumn.Name, Math.Clamp(w / 4, Px(NameMin), Px(330)));
+        Grow(ModColumn.Compat, Px(190));
+        Grow(ModColumn.Author, Px(170));
+        if (spare > 0) Grow(width.ContainsKey(ModColumn.Update) ? ModColumn.Update : ModColumn.Name, int.MaxValue);
+        var res = new List<Column>();
+        int x = 0;
+        foreach (var d in set)
+        {
+            int cw = width[d.Col];
+            res.Add(new Column { Col = d.Col, Title = d.Title, Short = d.Title, Tip = d.Tip, X = x, W = cw, Right = d.Right });
+            x += cw;
+        }
+        return res;
+    }
+
+    /// Строка «Компактного» стиля (29 px, как в редакторе кода): флажок, аватар и название, версия, автор,
+    /// совместимость со значком, число хуков, обновление, размер. Конфликт хуков — янтарная подложка строки.
+    private void LayoutFlatRow(CardInfo c)
+    {
+        var m = c.M;
+        int body = c.H - Math.Max(1, Px(1));   // снизу — линия-разделитель
+        bool on = c.On && !c.Avail;
+        Color soft = on ? Theme.NavySoft : Theme.Hint;
+        c.Conflict = !c.Avail && on && _m.CompatFor(m).Any(i => i.Code == "hook-conflict");
+        foreach (var col in Columns(c.W))
+        {
+            var cr = new Rectangle(col.X, 0, col.W, body);
+            switch (col.Col)
+            {
+                case ModColumn.Check:
+                {
+                    int cs = Px(14);
+                    c.Tg = c.Avail
+                        ? new Rectangle(cr.X + (cr.Width - Px(26)) / 2, (body - Px(20) + 1) / 2, Px(26), Px(20))
+                        : new Rectangle(cr.X + Px(8), (body - cs + 1) / 2, cs, cs);
+                    break;
+                }
+                case ModColumn.Name:
+                {
+                    int isz = Px(18);
+                    c.ShowIcon = true;
+                    c.Ico = new Rectangle(cr.X + Px(6), (body - isz + 1) / 2, isz, isz);
+                    LoadIcon(c, isz);
+                    int tx = cr.X + Px(31), right = cr.Right - Px(8);
+                    c.Title = m.DisplayName;
+                    int tw = Math.Min(Theme.Measure(c.Title, on ? Theme.ButtonFont : Theme.Body).Width, Math.Max(10, right - tx));
+                    c.TitleR = new Rectangle(tx, 0, tw + 2, body);
+                    c.TitleMarks = Marks(c.Title);
+                    int x = tx + tw + Px(8);
+                    if (m.Kind == "Plugin" && x + Px(56) < right)
+                    {
+                        var t = new TagPill { Text = "плагин", Bg = Theme.BlueTint, Fg = Theme.BlueText, Tip = "Плагин MelonLoader (папка Plugins): загружается раньше модов" };
+                        int pw = Theme.PillWidth(t.Text, Theme.SmallBold, Px(16), false);
+                        t.R = new Rectangle(x, (body - Px(16) + 1) / 2, pw, Px(16));
+                        c.Tags.Add(t);
+                    }
+                    break;
+                }
+                case ModColumn.Version:
+                    AddFlatCell(c, col, cr, string.IsNullOrEmpty(m.Version) ? "—" : m.Version, string.IsNullOrEmpty(m.Version) ? Theme.Hint : soft, Theme.MonoCode, marks: Marks(m.Version));
+                    break;
+                case ModColumn.Author:
+                    AddFlatCell(c, col, cr, string.IsNullOrWhiteSpace(m.Author) ? "—" : m.Author, string.IsNullOrWhiteSpace(m.Author) ? Theme.Hint : soft, Theme.Body, marks: Marks(m.Author));
+                    break;
+                case ModColumn.Compat:
+                {
+                    var (text, fg, icon, tip) = FlatCompatCell(m, c.St.Tip);
+                    AddFlatCell(c, col, cr, text, fg, Theme.Body, icon, tip);
+                    break;
+                }
+                case ModColumn.Hooks:
+                {
+                    var (text, _, _, tip) = HooksCell(m);
+                    bool num = text.Length > 0 && char.IsDigit(text[0]);
+                    if (num) { int sp = text.IndexOf(' '); if (sp > 0) text = text.Substring(0, sp); }
+                    else if (text == "нет") text = "0";
+                    AddFlatCell(c, col, cr, text, num || text == "0" ? soft : Theme.Hint, Theme.MonoCode, tip: tip);
+                    break;
+                }
+                case ModColumn.Update:
+                {
+                    var u = _m.UpdateFor(m);
+                    if (u == null) AddFlatCell(c, col, cr, "—", Theme.Hint, Theme.Body);
+                    else if (u.Kind == "outdated") AddFlatCell(c, col, cr, "устарел?", Theme.Orange, Theme.Body, VIcon.Warning, WrapTip("По журналу игры: " + u.Reason));
+                    else AddFlatCell(c, col, cr, u.Version, Theme.Blue, Theme.Body, VIcon.CircleDown, WrapTip("Новая версия v" + u.Version + ": " + u.Where + "\nОбновить — в подробностях мода (вкладка «Детали») или в разделе «Каталог и обновления»"));
+                    break;
+                }
+                case ModColumn.Size:
+                    AddFlatCell(c, col, cr, m.Size > 0 ? Theme.FileSize(m.Size) : "—", m.Size > 0 ? soft : Theme.Hint, Theme.MonoCode);
+                    break;
+            }
+        }
+    }
+
+    private static void AddFlatCell(CardInfo c, Column col, Rectangle cr, string text, Color fg, Font font, VIcon icon = VIcon.None, string? tip = null,
+        List<(int Start, int Length)>? marks = null)
+        => c.Cells.Add(new Cell { Col = col.Col, R = cr, Text = text, Fg = fg, Font = font, Icon = icon, Right = col.Right, Marks = marks, Tip = tip });
+
+    /// Совместимость: значок и слово — худшая проблема, предупреждения в журнале, «работает» у запущенной игры или «совместим».
+    private (string Text, Color Fg, VIcon Icon, string? Tip) FlatCompatCell(ModEntry m, string statusTip)
+    {
+        if (m.Available) return ("в «" + m.SourceLabel + "»", Theme.Blue, VIcon.CircleDown, "Не установлен — найден в «" + m.SourceLabel + "». Enter — установить.");
+        if (!m.Readable) return ("не читается", Theme.Coral, VIcon.CircleX, statusTip);
+        var probs = _m.Problems(m);
+        if (probs.Count > 0)
+        {
+            var worst = probs.FirstOrDefault(p => p.Tone == Tone.Error);
+            if (worst.Text == null) worst = probs[0];
+            bool err = worst.Tone == Tone.Error, hooks = !err && worst.Text == "конфликт хуков";
+            var tips = _m.CompatBadges(m).Select(CompatTip).Concat(_m.BaseProblems(m).Select(p => "• " + p.Text)).ToList();
+            return (worst.Text + (probs.Count > 1 ? "  +" + (probs.Count - 1) : ""), err ? Theme.Coral : Theme.Orange,
+                err ? VIcon.CircleX : hooks ? VIcon.Branch : VIcon.Warning, string.Join("\n\n", tips));
+        }
+        var ls = _m.LogFor(m);
+        if (ls != null && ls.Warnings > 0)
+            return (ls.Warnings + " предупр. в журнале", Theme.Orange, VIcon.Warning,
+                "В журнале прошлого запуска " + Theme.Count(ls.Warnings, "предупреждение", "предупреждения", "предупреждений")
+                + (ls.LastWarning.Length > 0 ? ", последнее:\n" + WrapTip(OneLine(ls.LastWarning)) : "") + "\nВсе строки — вкладка «Журнал игры» внизу.");
+        bool on = _m.On(m.Id);
+        if (_m.GameRunning && on && m.Enabled && _m.Log != null)
+            return _m.Log.WasLoaded(m.Id)
+                ? ("работает", Theme.Green, VIcon.CircleCheck, "Загружен в запущенную игру")
+                : ("не загружен", Theme.Orange, VIcon.Warning, statusTip);
+        if (_m.Compat == null) return _m.CompatBusy ? ("проверка…", Theme.Hint, VIcon.None, "Идёт проверка совместимости") : ("—", Theme.Hint, VIcon.None, null);
+        var info = _m.CompatFor(m).Where(i => i.Level == CompatLevel.Info).ToList();
+        return ("совместим", on ? Theme.Green : Theme.Mix(Theme.Green, Theme.Cream, 0.3f), VIcon.CircleCheck,
+            info.Count > 0 ? string.Join("\n\n", info.Select(CompatTip)) : "Проверка совместимости не нашла проблем");
+    }
+
+    /// Флажок «Компактного» стиля: 14 px, бирюзовый с тёмной галочкой или тонкая серая рамка. Ждёт применения — точка в углу.
+    private void FlatCheckBox(Graphics g, Rectangle r, bool on, bool hover, bool dim, bool pending, Color bg)
+    {
+        float rad = Px(3);
+        if (on)
+        {
+            Color fill = hover ? Theme.TealDark : Theme.Teal;
+            if (dim) fill = Theme.Mix(fill, bg, 0.5f);
+            Theme.FillRound(g, r, rad, fill);
+            Theme.Icon(g, VIcon.Check, r, Theme.OnAccent, Math.Max(1.5f, 1.9f * S));
+        }
+        else
+        {
+            float w = Math.Max(1f, S);
+            Theme.StrokeRound(g, new RectangleF(r.X + w / 2f, r.Y + w / 2f, r.Width - w, r.Height - w), rad, hover ? Theme.Teal : dim ? Theme.Line : Theme.Hint, w);
+        }
+        if (pending)
+        {
+            float cx = r.Right - Px(1), cy = r.Y + Px(1);
+            Theme.Dot(g, cx, cy, Px(4.5f), bg);
+            Theme.Dot(g, cx, cy, Px(3.2f), on ? Theme.Blue : Theme.Orange);
+        }
+    }
+
+    private void DrawFlatRow(Graphics g, CardInfo c, int ox, int oy)
+    {
+        var r = new Rectangle(ox, oy, c.W, c.H);
+        Rectangle O(Rectangle q) => new(q.X + ox, q.Y + oy, q.Width, q.Height);
+        int one = Math.Max(1, Px(1));
+        Color baseBg = c.Conflict ? Theme.OrangeTint : c.Avail ? Theme.Mix(Theme.Cream, Theme.HeaderBg, 0.5f) : Theme.Cream;
+        Color bg = c.Sel ? Theme.Selected : c.Hover ? (c.Conflict || c.Avail ? Theme.Mix(baseBg, Theme.Navy, 0.03f) : Theme.RowHover) : baseBg;
+        using (var b = new SolidBrush(bg)) g.FillRectangle(b, r.X, r.Y, r.Width, r.Height - one);
+        using (var b = new SolidBrush(Theme.Mix(Theme.Cream, Theme.Line, 0.43f))) g.FillRectangle(b, r.X, r.Bottom - one, r.Width, one);
+        if (c.Sel) using (var b = new SolidBrush(Theme.Teal)) g.FillRectangle(b, r.X, r.Y, Px(2), r.Height - one);
+
+        var tg = O(c.Tg);
+        if (c.Avail) DrawInstallButton(g, c, tg);
+        else FlatCheckBox(g, tg, c.On, c.HTgl, !c.Readable, c.Pending, bg);
+
+        bool on = c.On && !c.Avail;
+        if (c.ShowIcon) DrawAvatar(g, c, O(c.Ico), Theme.Tiny, Px(4));
+        Theme.TextMarked(g, c.Title, on ? Theme.ButtonFont : Theme.Body, O(c.TitleR), on ? Theme.Navy : Theme.NavySoft, c.TitleMarks);
+        foreach (var t in c.Tags) Theme.Pill(g, t.R.X + ox, t.R.Y + oy, t.R.Height, t.Text, Theme.SmallBold, t.Bg, t.Fg);
+
+        foreach (var x in c.Cells)
+        {
+            var cr = O(x.R);
+            int pad = Px(8);
+            var tr = new Rectangle(cr.X + pad, cr.Y, cr.Width - pad * 2, cr.Height);
+            if (x.Icon != VIcon.None)
+            {
+                int isz = Px(12);
+                Theme.Icon(g, x.Icon, new RectangleF(tr.X, cr.Y + (cr.Height - isz) / 2f, isz, isz), x.Fg);
+                int shift = x.Col == ModColumn.Update ? Px(17) : Px(19);
+                tr = new Rectangle(tr.X + shift, tr.Y, tr.Width - shift, tr.Height);
+            }
+            var f = x.Font ?? Theme.Body;
+            if (x.Right) Theme.Text(g, x.Text, f, tr, x.Fg, TextFormatFlags.Right);
+            else Theme.TextMarked(g, x.Text, f, tr, x.Fg, x.Marks);
+        }
+    }
+
+    /// Шапка таблицы «Компактного» стиля: тёмная полоса, серые подписи без разделителей; у «Мод» — шеврон, пока порядок
+    /// по умолчанию; у колонки сортировки — стрелка вверх или вниз.
+    private void PaintFlatHeader(Graphics g, int w)
+    {
+        int h = TopH, one = Math.Max(1, Px(1));
+        using (var b = new SolidBrush(Theme.HeaderBg)) g.FillRectangle(b, 0, 0, Width, h - one);
+        using (var b = new SolidBrush(Theme.Line)) g.FillRectangle(b, 0, h - one, Width, one);
+        var font = Theme.SmallBold;
+        foreach (var col in Columns(w))
+        {
+            var cr = new Rectangle(Pad + col.X, 0, col.W, h - one);
+            string key = "col:" + col.Col;
+            bool hv = IsHover(key), dn = IsDown(key), active = SortColumn == col.Col;
+            if (hv || dn) using (var hb = new SolidBrush(dn ? Theme.Beige : Theme.Mix(Theme.HeaderBg, Theme.Navy, 0.04f))) g.FillRectangle(hb, cr);
+            Color fg = active ? Theme.Navy : hv ? Theme.NavySoft : Theme.Hint;
+            bool chev = active || col.Col == ModColumn.Name && SortColumn == ModColumn.None;
+            int cw = Px(11), pad = col.Col == ModColumn.Name ? Px(6) : Px(8);
+            if (col.Col == ModColumn.Check)
+            {
+                if (active) Theme.Icon(g, SortDesc ? VIcon.ChevronDown : VIcon.ChevronUp, new RectangleF(cr.X + (cr.Width - cw) / 2f, (cr.Height - cw) / 2f, cw, cw), Theme.TealText);
+                continue;
+            }
+            int extra = chev ? cw + Px(3) : 0;
+            int tw = Math.Min(Theme.Measure(col.Title, font).Width + 2, Math.Max(0, cr.Width - pad * 2 - extra));
+            int tx = col.Right ? cr.Right - pad - tw - extra : cr.X + pad;
+            Theme.Text(g, col.Title, font, new Rectangle(tx, 0, tw, cr.Height), fg);
+            if (chev)
+                Theme.Icon(g, active && !SortDesc ? VIcon.ChevronUp : VIcon.ChevronDown, new RectangleF(tx + tw + Px(2), (cr.Height - cw) / 2f + Px(0.5f), cw, cw),
+                    active ? Theme.TealText : Theme.Hint);
+        }
+    }
+
     // ───────── карточка: раскладка и подпись ─────────
 
     private sealed class TagPill
@@ -423,6 +696,8 @@ internal sealed class ModList : Canvas
         public bool Right;
         public List<(int Start, int Length)>? Marks;
         public string? Tip;
+        public VIcon Icon;        // значок перед текстом («Компактный»: совместимость, обновление)
+        public Font? Font;        // шрифт ячейки (null — мелкий)
     }
 
     /// Всё, что видно на карточке (координаты — от левого верхнего угла карточки).
@@ -431,7 +706,7 @@ internal sealed class ModList : Canvas
         public ModEntry M = null!;
         public ListMode Mode;
         public int W, H, Index;
-        public bool Sel, Avail, On, Hover, HTgl, HInst, DInst, Readable, ShowIcon, NoDesc, Alt, Pending, AuthorDot;
+        public bool Sel, Avail, On, Hover, HTgl, HInst, DInst, Readable, ShowIcon, NoDesc, Alt, Pending, AuthorDot, Conflict;
         public Color Accent;
         public (string Text, Color Bg, Color Fg, string Tip) St;
         public Rectangle Tg, Ico, Pill;
@@ -475,7 +750,7 @@ internal sealed class ModList : Canvas
         c.Alt = index % 2 == 1;
         switch (c.Mode)
         {
-            case ListMode.Table: LayoutRow(c); break;
+            case ListMode.Table: if (Flat) LayoutFlatRow(c); else LayoutRow(c); break;
             case ListMode.Cards: LayoutFluent(c); break;
             default: LayoutCapsule(c); break;
         }
@@ -486,7 +761,12 @@ internal sealed class ModList : Canvas
     private void LoadIcon(CardInfo c, int isz)
     {
         if (Icons != null) c.Img = Icons.Get(c.M, isz, out _, out c.ImgSerial);
-        if (c.Img == null) { c.Initials = IconCache.Initials(c.M.DisplayName); (c.AvBg, c.AvFg) = IconCache.AvatarColors(c.M.Id); }
+        if (c.Img == null)
+        {
+            c.Initials = IconCache.Initials(c.M.DisplayName);
+            if (Flat) c.Initials = c.Initials.ToUpperInvariant();
+            (c.AvBg, c.AvFg) = IconCache.AvatarColors(c.M.Id);
+        }
     }
 
     private void SetDescription(CardInfo c, Rectangle r, Font f)
@@ -807,7 +1087,7 @@ internal sealed class ModList : Canvas
         sb.Append(c.M.Id).Append('|').Append((int)c.Mode).Append('#').Append(Theme.Generation).Append('|').Append(c.W).Append('x').Append(c.H).Append('@').Append(DeviceDpi).Append('|').Append(BackColor.ToArgb()).Append('|')
           .Append(c.Sel ? 'S' : '-').Append(c.Hover ? 'H' : '-').Append(c.HTgl ? 'T' : '-').Append(c.HInst ? 'I' : '-').Append(c.DInst ? 'D' : '-')
           .Append(c.Avail ? 'A' : '-').Append(c.On ? '1' : '0').Append(c.Readable ? 'R' : '-').Append(c.ShowIcon ? 'i' : '-').Append(c.Pending ? 'P' : '-')
-          .Append(c.Mode == ListMode.Table && c.Alt ? 'z' : '-').Append('|')
+          .Append(c.Mode == ListMode.Table && c.Alt ? 'z' : '-').Append(Flat ? 'F' : '-').Append(c.Conflict ? 'C' : '-').Append('|')
           .Append(c.Accent.ToArgb()).Append('|').Append(c.St.Text).Append(c.St.Bg.ToArgb()).Append(c.St.Fg.ToArgb()).Append('|');
         if (c.Img != null) sb.Append("img").Append(c.ImgSerial); else sb.Append(c.Initials).Append(c.AvBg.ToArgb());
         sb.Append('|').Append(c.Title).Append(c.TitleR.Width); Marks(sb, c.TitleMarks);
@@ -820,6 +1100,8 @@ internal sealed class ModList : Canvas
             sb.Append('|').Append((int)x.Col).Append(':').Append(x.Text).Append(x.Fg.ToArgb());
             if (x.Dot is Color d) sb.Append('d').Append(d.ToArgb());
             if (x.PillBg is Color pb) sb.Append('p').Append(pb.ToArgb());
+            if (x.Icon != VIcon.None) sb.Append('i').Append((int)x.Icon);
+            if (x.Font != null) sb.Append('f').Append(x.Font.Name).Append(x.Font.SizeInPoints);
             Marks(sb, x.Marks);
         }
         sb.Append('|').Append(c.More);
@@ -914,7 +1196,7 @@ internal sealed class ModList : Canvas
         var area = Rectangle.Intersect(clip, new Rectangle(0, TopH, Width, ViewH));
         if (area.Width <= 0 || area.Height <= 0) return;
         int w = CardW, pad = Pad, bottom = Height;
-        using var b = new SolidBrush(Theme.Paper);
+        using var b = new SolidBrush(Flat ? Theme.Cream : Theme.Paper);
         void Fill(int x, int y, int fw, int fh)
         {
             var q = Rectangle.Intersect(new Rectangle(x, y, fw, fh), area);
@@ -960,7 +1242,7 @@ internal sealed class ModList : Canvas
         if (table)
         {
             if (TopH > 0) DrawTableHeader(g, w, _clip.Top < TopH); // зоны колонок нужны всегда, рисунок — если шапку задели
-            DrawTableFrame(g);
+            if (!Flat) DrawTableFrame(g);                           // «Компактный» — без рамки: таблица во всю ширину
         }
         if (HasBar)
         {
@@ -1067,7 +1349,7 @@ internal sealed class ModList : Canvas
     {
         switch (c.Mode)
         {
-            case ListMode.Table: DrawRow(g, c, ox, oy); break;
+            case ListMode.Table: if (Flat) DrawFlatRow(g, c, ox, oy); else DrawRow(g, c, ox, oy); break;
             case ListMode.Cards: DrawFluent(g, c, ox, oy); break;
             default: DrawCapsule(g, c, ox, oy); break;
         }
@@ -1329,6 +1611,7 @@ internal sealed class ModList : Canvas
 
     private void PaintTableHeader(Graphics g, int w)
     {
+        if (Flat) { PaintFlatHeader(g, w); return; }
         int h = TopH;
         var sm = g.SmoothingMode; g.SmoothingMode = SmoothingMode.None;
         using (var b = new SolidBrush(Theme.HeaderBg)) g.FillRectangle(b, new Rectangle(0, 0, Width, h));
@@ -1388,11 +1671,23 @@ internal sealed class ModList : Canvas
     {
         var r = new Rectangle(Pad, Pad, Width - Pad * 2, Height - Pad * 2);
         float rad = Px(Theme.Spec.PanelRadius);
-        Theme.FillRound(g, r, rad, Theme.Paper);
-        Theme.StrokeRound(g, r, rad, Theme.Line, Math.Max(1f, S));
+        if (!Flat)   // «Компактный» — прямо на фоне таблицы, без панели
+        {
+            Theme.FillRound(g, r, rad, Theme.Paper);
+            Theme.StrokeRound(g, r, rad, Theme.Line, Math.Max(1f, S));
+        }
         int sz = Px(64);
         int cy = r.Y + Math.Max(Px(20), r.Height / 2 - Px(84));
-        Theme.Slime(g, new RectangleF(r.X + (r.Width - sz) / 2f, cy, sz, sz * 0.86f), EmptyHappy ? Theme.Teal : Theme.Hex(0xB9C2D0), EmptyHappy);
+        if (Flat)
+        {   // «Компактный»: значок в круге, как у пустых вкладок нижней панели
+            int d = Px(46);
+            var c = new Rectangle(r.X + (r.Width - d) / 2, cy + sz - d - Px(10), d, d);
+            Theme.FillRound(g, c, d / 2f, EmptyHappy ? Theme.TealTint : Theme.Beige);
+            var ic = EmptyIcon != VIcon.None ? EmptyIcon : EmptyHappy ? VIcon.Check : VIcon.CircleInfo;
+            float isz = Px(18);
+            Theme.Icon(g, ic, new RectangleF(c.X + (d - isz) / 2f, c.Y + (d - isz) / 2f, isz, isz), EmptyHappy ? Theme.TealText : Theme.NavySoft);
+        }
+        else Theme.Slime(g, new RectangleF(r.X + (r.Width - sz) / 2f, cy, sz, sz * 0.86f), EmptyHappy ? Theme.Teal : Theme.Hex(0xB9C2D0), EmptyHappy);
         Theme.Text(g, EmptyTitle, Theme.Strong, new Rectangle(r.X + Px(20), cy + sz, r.Width - Px(40), Px(28)), Theme.Navy, TextFormatFlags.HorizontalCenter);
         int tw = r.Width - Px(80);
         int th = Math.Min(Theme.WrapHeight(EmptyText, Theme.Body, tw), Px(80));

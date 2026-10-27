@@ -21,6 +21,7 @@ internal sealed class DockPanel : Canvas
     {
         public DockTab Id;
         public string Text = "", Short = "", Glyph = "", Tip = "";
+        public VIcon Icon;             // векторный значок вкладки «Компактного» стиля
         public string? Badge;          // счётчик рядом с названием (null — нет)
         public Tone Tone;              // цвет счётчика: Error — красный, Warn — оранжевый, Info — синий
         public Control? Page;
@@ -36,6 +37,7 @@ internal sealed class DockPanel : Canvas
     public readonly List<Tab> Tabs = new();
     public readonly List<Tool> Tools = new();   // кнопки справа в полосе — свои у каждой вкладки
     public string Note = "", NoteTip = "";      // пояснение справа (время журнала, что проверено)
+    public string NoteShort = "";               // то же короче — если полное не помещается
     public DockTab Active { get; private set; } = DockTab.Details;
     public bool Collapsed { get; private set; }
     public event Action<DockTab>? Picked;
@@ -43,16 +45,19 @@ internal sealed class DockPanel : Canvas
 
     public DockPanel() { BackColor = Theme.Cream; }
 
-    public int BarH => Px(36);
+    private static bool Flat => Theme.Spec.Flat;
 
-    /// Отступ страницы от края: прямоугольная страница не должна закрывать скруглённые нижние углы.
-    private int Inset => Math.Max(Px(1), (int)Math.Ceiling(Px(Theme.Spec.PanelRadius) * 0.3f));
+    public int BarH => Flat ? Px(34) : Px(36);
+
+    /// Отступ страницы от края: прямоугольная страница не должна закрывать скруглённые нижние углы
+    /// (у «Компактного» углов нет — страница во всю ширину).
+    private int Inset => Flat ? 0 : Math.Max(Px(1), (int)Math.Ceiling(Px(Theme.Spec.PanelRadius) * 0.3f));
 
     public Rectangle PageRect => new(Inset, BarH, Math.Max(0, Width - 2 * Inset), Math.Max(0, Height - BarH - Inset));
 
-    public Tab Add(DockTab id, string text, string shortText, string glyph, Control page, string tip)
+    public Tab Add(DockTab id, string text, string shortText, string glyph, Control page, string tip, VIcon icon = VIcon.None)
     {
-        var t = new Tab { Id = id, Text = text, Short = shortText, Glyph = glyph, Page = page, Tip = tip };
+        var t = new Tab { Id = id, Text = text, Short = shortText, Glyph = glyph, Page = page, Tip = tip, Icon = icon };
         Tabs.Add(t);
         page.Visible = false;
         Controls.Add(page);
@@ -111,6 +116,18 @@ internal sealed class DockPanel : Canvas
 
     private int BadgeW(string s) => Math.Max(Px(18), Theme.Measure(s, Theme.Section).Width + Px(10));
 
+    /// Счётчик вкладки «Компактного» стиля: маленький, тонированный (ошибки — красным, предупреждения — жёлтым).
+    private static (Color Bg, Color Fg) FlatBadgeColors(Tone t) => t switch
+    {
+        Tone.Error => (Theme.CoralTint, Theme.CoralText),
+        Tone.Warn => (Theme.OrangeTint, Theme.OrangeText),
+        Tone.Info => (Theme.BlueTint, Theme.BlueText),
+        Tone.Ok => (Theme.TealTint, Theme.TealText),
+        _ => (Theme.LineDark, Theme.NavySoft),
+    };
+
+    private int FlatBadgeW(string s) => Math.Max(Px(18), Theme.Measure(s, Theme.Section).Width + Px(8));
+
     private void DrawBadge(Graphics g, int x, int barH, string s, Tone tone)
     {
         var (bg, fg) = BadgeColors(tone);
@@ -134,18 +151,29 @@ internal sealed class DockPanel : Canvas
     protected override void Draw(Graphics g)
     {
         float rad = Px(Theme.Spec.PanelRadius);
+        bool flat = Flat;
         int h = Collapsed ? Height : BarH;
-        var panel = new RectangleF(0, 0, Width, Height);
-        using (var path = Theme.RoundRect(panel, rad))
-        {
-            using (var b = new SolidBrush(Theme.Paper)) g.FillPath(b, path);
-            var st = g.Save();
-            g.SetClip(path, CombineMode.Intersect);
-            using (var b = new SolidBrush(Theme.HeaderBg)) g.FillRectangle(b, 0, 0, Width, h);
-            if (!Collapsed) using (var p = new Pen(Theme.Line, Math.Max(1f, S))) g.DrawLine(p, 0, h - 1, Width, h - 1);
-            g.Restore(st);
+        if (flat)
+        {   // «Компактный»: полоса во всю ширину, снизу — линия; страница закрывает остальное
+            int one = Math.Max(1, Px(1));
+            using (var b = new SolidBrush(Theme.HeaderBg)) g.FillRectangle(b, 0, 0, Width, Height);
+            if (!Collapsed) using (var b = new SolidBrush(Theme.Line)) g.FillRectangle(b, 0, h - one, Width, one);
+            h -= Collapsed ? 0 : one;
         }
-        Theme.StrokeRound(g, panel, rad, Theme.Line, Math.Max(1f, S));
+        else
+        {
+            var panel = new RectangleF(0, 0, Width, Height);
+            using (var path = Theme.RoundRect(panel, rad))
+            {
+                using (var b = new SolidBrush(Theme.Paper)) g.FillPath(b, path);
+                var st = g.Save();
+                g.SetClip(path, CombineMode.Intersect);
+                using (var b = new SolidBrush(Theme.HeaderBg)) g.FillRectangle(b, 0, 0, Width, h);
+                if (!Collapsed) using (var p = new Pen(Theme.Line, Math.Max(1f, S))) g.DrawLine(p, 0, h - 1, Width, h - 1);
+                g.Restore(st);
+            }
+            Theme.StrokeRound(g, panel, rad, Theme.Line, Math.Max(1f, S));
+        }
 
         // справа: «свернуть/развернуть»
         var cr = new Rectangle(Width - Px(8) - Px(30), (h - Px(26)) / 2, Px(30), Px(26));
@@ -153,13 +181,20 @@ internal sealed class DockPanel : Canvas
         if (chv) Theme.FillRound(g, cr, Theme.Radius(cr.Height, S), HoverBg);
         Theme.Glyph(g, Collapsed ? Theme.GChevronUp : Theme.GChevronDown, cr, chv ? Theme.Navy : Theme.NavySoft, Theme.IconsSmall);
         AddHit(cr, "collapse", () => CollapseToggled?.Invoke(), Collapsed ? "Развернуть панель (Ctrl+J)" : "Свернуть панель (Ctrl+J)");
-        int right = cr.X - Px(6), left = Px(6);
+        int right = cr.X - Px(6), left = flat ? Px(8) : Px(6);
 
         // что влезает: вкладки с полными названиями → короткими → без значков; кнопки — с подписями → только значки
         var font = Theme.ButtonFont;
         bool shortT = false, glyphs = true, toolIcons = false;
         int TabW(Tab t)
         {
+            if (flat)
+            {
+                int fw = Px(13) * 2 + Theme.Measure(shortT ? t.Short : t.Text, font).Width;
+                if (glyphs && (t.Icon != VIcon.None || t.Glyph.Length > 0)) fw += Px(12) + Px(9);
+                if (!string.IsNullOrEmpty(t.Badge)) fw += Px(7) + FlatBadgeW(t.Badge!);
+                return fw + Px(4);
+            }
             int w = Px(12) * 2 + Theme.Measure(shortT ? t.Short : t.Text, font).Width;
             if (glyphs && t.Glyph.Length > 0) w += Px(22);
             if (!string.IsNullOrEmpty(t.Badge)) w += Px(7) + BadgeW(t.Badge!);
@@ -211,6 +246,7 @@ internal sealed class DockPanel : Canvas
         {
             int w = TabW(t);
             if (x + w > tx && x > left) break;
+            if (flat) { DrawFlatTab(g, t, new Rectangle(x, 0, w - Px(4), h), shortT, glyphs); x += w; continue; }
             var r = new Rectangle(x, 0, w, h);
             string key = "tab:" + (int)t.Id;
             bool act = t.Id == Active && !Collapsed, hv = IsHover(key);
@@ -242,11 +278,52 @@ internal sealed class DockPanel : Canvas
             var nr = new Rectangle(x + Px(14), 0, tx - Px(10) - (x + Px(14)), h);
             if (nr.Width >= Px(90))
             {
-                Theme.Text(g, Note, Theme.Small, nr, Theme.Hint, TextFormatFlags.Right);
-                bool cut = Theme.Measure(Note, Theme.Small).Width > nr.Width;
-                if (cut || NoteTip.Length > 0) AddHit(nr, "note", null, NoteTip.Length > 0 ? NoteTip : Note, null, false);
+                // полное → короткое; если есть короткое, но и оно не влезает — не показываем вовсе (обрезанное хуже пустого)
+                string note = Note;
+                if (NoteShort.Length > 0 && Theme.Measure(note, Theme.Small).Width > nr.Width)
+                    note = Theme.Measure(NoteShort, Theme.Small).Width <= nr.Width ? NoteShort : "";
+                if (note.Length > 0)
+                {
+                    Theme.Text(g, note, Theme.Small, nr, Theme.Hint, TextFormatFlags.Right);
+                    bool cut = note != Note || Theme.Measure(note, Theme.Small).Width > nr.Width;
+                    if (cut || NoteTip.Length > 0) AddHit(nr, "note", null, NoteTip.Length > 0 ? NoteTip : Note, null, false);
+                }
             }
         }
+    }
+
+    /// Вкладка «Компактного» стиля: значок, подпись, счётчик; активная — светлее и подчёркнута бирюзой.
+    private void DrawFlatTab(Graphics g, Tab t, Rectangle r, bool shortT, bool glyphs)
+    {
+        string key = "tab:" + (int)t.Id;
+        bool act = t.Id == Active && !Collapsed, hv = IsHover(key);
+        Color fg = act || hv ? Theme.Navy : Theme.NavySoft;
+        int x = r.X + Px(13);
+        if (glyphs && t.Icon != VIcon.None)
+        {
+            int isz = Px(12);
+            Theme.Icon(g, t.Icon, new RectangleF(x, r.Y + (r.Height - isz) / 2f, isz, isz), fg);
+            x += isz + Px(9);
+        }
+        else if (glyphs && t.Glyph.Length > 0)
+        {
+            Theme.Glyph(g, t.Glyph, new Rectangle(x - Px(2), r.Y, Px(16), r.Height), fg, Theme.IconsSmall);
+            x += Px(12) + Px(9);
+        }
+        string s = shortT ? t.Short : t.Text;
+        int sw = Theme.Measure(s, Theme.ButtonFont).Width;
+        Theme.Text(g, s, act ? Theme.ButtonFont : Theme.Body, new Rectangle(x, r.Y, sw + Px(2), r.Height), fg);
+        x += sw;
+        if (!string.IsNullOrEmpty(t.Badge))
+        {
+            var (bg, bf) = FlatBadgeColors(t.Tone);
+            var br = new Rectangle(x + Px(7), r.Y + (r.Height - Px(15)) / 2, FlatBadgeW(t.Badge!), Px(15));
+            Theme.FillRound(g, br, Px(7), bg);
+            Theme.Text(g, t.Badge, Theme.Section, br, bf, TextFormatFlags.HorizontalCenter);
+        }
+        if (act) using (var b = new SolidBrush(Theme.Teal)) g.FillRectangle(b, r.X, r.Bottom - Px(2), r.Width, Px(2));
+        var tab = t;
+        AddHit(r, key, () => Picked?.Invoke(tab.Id), t.Tip.Length > 0 ? t.Tip : null);
     }
 
     protected override void OnMouseDoubleClick(MouseEventArgs e)
@@ -318,6 +395,13 @@ internal sealed class DockGrip : Surface
 
     protected override void Draw(Graphics g)
     {
+        if (Theme.Spec.Flat)
+        {   // «Компактный»: тонкая линия у нижнего края; при наведении и перетаскивании — бирюзовая
+            int lh = _drag || _hover ? Math.Max(2, Px(2)) : Math.Max(1, Px(1));
+            using var lb = new SolidBrush(_drag ? Theme.Teal : _hover ? Theme.Mix(Theme.Line, Theme.Teal, 0.55f) : Theme.Line);
+            g.FillRectangle(lb, 0, Height - lh, Width, lh);
+            return;
+        }
         int w = Px(44), h = Math.Max(2, Px(4));
         var r = new RectangleF((Width - w) / 2f, (Height - h) / 2f, w, h);
         Theme.FillRound(g, r, h / 2f, _drag ? Theme.Teal : _hover ? Theme.LineDark : Theme.Line);
@@ -348,6 +432,9 @@ internal sealed class RowsView : Canvas
         public object? Tag;
         public int Indent;
         public string? Copy;           // текст для Ctrl+C (по умолчанию — заголовок и текст)
+        public VIcon Icon;             // векторный значок вместо глифа (высокие строки «Компактного» стиля)
+        public bool Rich;              // в тексте разметка: **жирный**, `код`
+        public List<(string Text, Action Act)>? Actions;   // кнопки справа (высокие строки)
     }
 
     private List<Row> _rows = new();
@@ -359,6 +446,9 @@ internal sealed class RowsView : Canvas
     public bool StickToEnd;            // держать прокрутку у конца, если она уже там (журнал)
     public int LeadW;                  // ширина столбца Lead, px при 96 dpi (0 — нет столбца)
     public int TitleW;                 // ширина столбца заголовка, px при 96 dpi (0 — по тексту)
+    /// Высокие строки (46 px) «Компактного» стиля: значок, название, текст с разметкой и кнопки справа.
+    public bool Tall { get => _tall; set { if (_tall == value) return; _tall = value; ClampScroll(); Invalidate(); } }
+    private bool _tall;
     // Заглушка пустого списка. Смена текста сразу перерисовывает панель: фоновая проверка совместимости
     // часто заканчивается без новых строк, и без перерисовки на вкладке оставалось «Идёт проверка…».
     public string EmptyTitle { get => _emptyTitle; set => SetEmpty(ref _emptyTitle, value ?? ""); }
@@ -381,8 +471,8 @@ internal sealed class RowsView : Canvas
     public int Count => _rows.Count;
 
     private Font RowFont => Mono ? Theme.Mono : Theme.Body;
-    public int RowH => Mono ? Math.Max(Px(20), Theme.LineHeight(Theme.Mono) + Px(6)) : Px(28);
-    private int Pad => Px(4);
+    public int RowH => Mono ? Math.Max(Px(20), Theme.LineHeight(Theme.Mono) + Px(6)) : _tall ? Px(46) : Px(28);
+    private int Pad => _tall ? 0 : Px(4);
     private int BarW => Px(10);
     private int ContentH => _rows.Count * RowH + Pad * 2;
     private int MaxScroll => Math.Max(0, ContentH - Height);
@@ -459,8 +549,17 @@ internal sealed class RowsView : Canvas
     private void InvalidateKey(string? key)
     {
         if (key == null) return;
-        if (key.StartsWith("row:", StringComparison.Ordinal) && int.TryParse(key.AsSpan(4), out int i)) Invalidate(RowRect(i));
+        if (RowIndex(key) is int i) Invalidate(RowRect(i));
         else Invalidate();
+    }
+
+    /// Номер строки из ключа зоны: «row:5» — строка, «row:5:a:1» — её кнопка.
+    private static int? RowIndex(string key)
+    {
+        if (!key.StartsWith("row:", StringComparison.Ordinal)) return null;
+        var rest = key.AsSpan(4);
+        int c = rest.IndexOf(':');
+        return int.TryParse(c >= 0 ? rest.Slice(0, c) : rest, out int i) ? i : null;
     }
 
     protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); if (_sel >= 0) Invalidate(RowRect(_sel)); }
@@ -504,6 +603,7 @@ internal sealed class RowsView : Canvas
             return;
         }
 
+        if (_tall) { DrawTallRow(g, row, i, r, titleW); return; }
         bool sel = i == _sel, hov = IsHover(key);
         var bg = new Rectangle(r.X + Px(4), r.Y + Px(1), r.Width - Px(8), r.Height - Px(2));
         float rad = Theme.Radius(bg.Height, S);
@@ -521,12 +621,32 @@ internal sealed class RowsView : Canvas
         if (row.Glyph.Length > 0) Theme.Glyph(g, row.Glyph, new Rectangle(x - Px(1), r.Y, Px(18), r.Height), Icon(row.Tone), Theme.IconsSmall);
         x += Px(22);
 
-        // справа налево: подпись, затем бейдж
+        // справа налево: подпись, затем бейдж. Подпись (пространство имён у хуков) уступает место названию и тексту:
+        // полная — если всё помещается, иначе ужимается (но не меньше ~90 px) и не больше трети строки
+        Font tf = Mono ? Theme.Mono : Theme.ButtonFont;
         if (row.Right.Length > 0)
         {
-            int rw = Math.Min(Theme.Measure(row.Right, Theme.Small).Width + Px(2), Math.Max(0, (right - x) / 3));
-            Theme.Text(g, row.Right, Theme.Small, new Rectangle(right - rw, r.Y, rw, r.Height), Theme.Hint, TextFormatFlags.Right);
-            right -= rw + Px(10);
+            int need = Theme.Measure(row.Right, Theme.Small).Width + Px(2);
+            int body = (row.Title.Length > 0 ? Theme.Measure(row.Title, tf).Width + Px(12) : 0) + (row.Text.Length > 0 ? Theme.Measure(row.Text, font).Width : 0)
+                     + (row.Badge.Length > 0 ? Theme.Measure(row.Badge, Theme.SmallBold).Width + Px(26) : 0);
+            int free = right - x - body - Px(10);
+            int rw = Math.Min(Math.Max(free, Math.Min(need, Px(90))), Math.Min(need, Math.Max(0, (right - x) / 3)));
+            if (rw > 0)
+            {
+                // не помещается — хвост пространства имён: «…SlimeRancher.Player»
+                string rt = row.Right;
+                if (need > rw && rt.IndexOf('.') > 0)
+                {
+                    var parts = rt.Split('.');
+                    for (int k = 1; k < parts.Length; k++)
+                    {
+                        string cand = "…" + string.Join(".", parts, k, parts.Length - k);
+                        if (Theme.Measure(cand, Theme.Small).Width + Px(2) <= rw || k == parts.Length - 1) { rt = cand; break; }
+                    }
+                }
+                Theme.Text(g, rt, Theme.Small, new Rectangle(right - rw, r.Y, rw, r.Height), Theme.Hint, TextFormatFlags.Right);
+                right -= rw + Px(10);
+            }
         }
         if (row.Badge.Length > 0)
         {
@@ -541,7 +661,6 @@ internal sealed class RowsView : Canvas
             }
         }
 
-        Font tf = Mono ? Theme.Mono : Theme.ButtonFont;
         if (row.Title.Length > 0)
         {
             int tw = titleW > 0 ? titleW : Math.Min(Theme.Measure(row.Title, tf).Width + Px(2), Math.Max(Px(40), (right - x) * 45 / 100));
@@ -557,6 +676,63 @@ internal sealed class RowsView : Canvas
         }
         int idx = i;
         AddHit(Rectangle.Intersect(r, ClientRectangle), key, () => SelectIndex(idx, true), row.Tip, pt => Menu(idx, pt), false);
+    }
+
+    /// Высокая строка: значок, название (колонка TitleW), текст с разметкой, кнопки справа; снизу — тонкая линия.
+    private void DrawTallRow(Graphics g, Row row, int i, Rectangle r, int titleW)
+    {
+        string key = "row:" + i;
+        bool sel = i == _sel, hov = HoverKey != null && (HoverKey == key || HoverKey.StartsWith(key + ":", StringComparison.Ordinal));
+        int one = Math.Max(1, Px(1));
+        if (sel || hov) using (var b = new SolidBrush(sel ? Theme.TealTint : Theme.Mix(BackColor, Theme.Navy, 0.04f))) g.FillRectangle(b, r);
+        using (var b = new SolidBrush(Theme.Mix(BackColor, Theme.Line, 0.47f))) g.FillRectangle(b, r.X, r.Bottom - one, r.Width, one);
+        if (sel && Focused) using (var b = new SolidBrush(Theme.Teal)) g.FillRectangle(b, r.X, r.Y, Px(2), r.Height - one);
+        else if (row.Mark) using (var b = new SolidBrush(Theme.Alpha(Theme.Teal, 150))) g.FillRectangle(b, r.X, r.Y, Px(2), r.Height - one);
+        var body = new Rectangle(r.X, r.Y, r.Width, r.Height - one);
+        int isz = Px(15);
+        var ir = new RectangleF(r.X + Px(20) - isz / 2f, body.Y + (body.Height - isz) / 2f, isz, isz);
+        if (row.Icon != VIcon.None) Theme.Icon(g, row.Icon, ir, Icon(row.Tone));
+        else if (row.Glyph.Length > 0) Theme.Glyph(g, row.Glyph, Rectangle.Round(RectangleF.Inflate(ir, Px(3), Px(3))), Icon(row.Tone), Theme.IconsSmall);
+
+        // кнопки — справа налево, пока остаётся место под название
+        int tx = r.X + Px(46), colW = titleW > 0 ? titleW : Px(190);
+        int right = r.Right - Px(12);
+        var acts = row.Actions;
+        int shownFrom = acts?.Count ?? 0;
+        var rects = new Rectangle[shownFrom];
+        for (int j = shownFrom - 1; j >= 0; j--)
+        {
+            int aw = Theme.Measure(acts![j].Text, Theme.ButtonFont).Width + Px(24);
+            var ar = new Rectangle(right - aw, body.Y + (body.Height - Px(26)) / 2, aw, Px(26));
+            if (ar.X < tx + Math.Min(colW, Px(120))) break;
+            rects[j] = ar;
+            shownFrom = j;
+            right = ar.X - Px(6);
+        }
+        int tw = Math.Max(0, Math.Min(colW, right - Px(8) - tx));
+        Theme.Text(g, row.Title, Theme.ButtonFont, new Rectangle(tx, body.Y, tw, body.Height), row.TitleTone == Tone.Neutral ? Theme.Navy : Fg(row.TitleTone));
+        int x = tx + colW + Px(10);
+        if (row.Text.Length > 0 && right - Px(12) > x)
+        {
+            var trc = new Rectangle(x, body.Y, right - Px(12) - x, body.Height);
+            Color c = row.TextTone == Tone.Neutral ? Theme.NavySoft : Fg(row.TextTone);
+            if (row.Rich) Theme.Rich(g, row.Text, Theme.Body, trc, c, S, Theme.Navy);
+            else Theme.Text(g, row.Text, Theme.Body, trc, c);
+        }
+        int idx = i;
+        AddHit(Rectangle.Intersect(r, ClientRectangle), key, () => SelectIndex(idx, true), row.Tip, pt => Menu(idx, pt), false);
+        for (int j = shownFrom; j < (acts?.Count ?? 0); j++)
+        {
+            var ar = rects[j];
+            string ak = key + ":a:" + j;
+            bool ah = IsHover(ak), ad = IsDown(ak);
+            float rad = Math.Max(2f, Px(4));
+            Theme.FillRound(g, ar, rad, ad ? Theme.BeigeDark : ah ? Theme.Mix(Theme.Beige, Theme.BeigeDark, 0.6f) : Theme.Beige);
+            Theme.StrokeRound(g, ar, rad, ah ? Theme.Mix(Theme.LineDark, Theme.NavySoft, 0.35f) : Theme.LineDark, Math.Max(1f, S));
+            Theme.Text(g, acts![j].Text, Theme.ButtonFont, ar, Theme.Navy, TextFormatFlags.HorizontalCenter);
+            var act = acts[j].Act;
+            AddHit(ar, ak, () => { SelectIndex(idx, false); act(); });
+        }
     }
 
     private void SetEmpty(ref string field, string value)
@@ -654,7 +830,7 @@ internal sealed class RowsView : Canvas
         base.OnMouseDoubleClick(e);
         if (e.Button != MouseButtons.Left || OnBar(e.Location)) return;
         var h = HitAt(e.Location);
-        if (h != null && h.Key.StartsWith("row:", StringComparison.Ordinal) && int.TryParse(h.Key.AsSpan(4), out int i) && i < _rows.Count && !_rows[i].Header)
+        if (h != null && h.Key.StartsWith("row:", StringComparison.Ordinal) && h.Key.IndexOf(':', 4) < 0 && int.TryParse(h.Key.AsSpan(4), out int i) && i < _rows.Count && !_rows[i].Header)
             RowActivated?.Invoke(_rows[i]);
     }
 

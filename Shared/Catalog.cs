@@ -479,7 +479,9 @@ public static class Catalog
 
 // ───────────── быстрые фильтры ─────────────
 
-public enum CatalogFilter { All = 0, Installed = 1, Updates = 2, Disabled = 3, Problems = 4 }
+/// Быстрые фильтры списка. Enabled и Catalog — у стиля «Компактный»: вкладка «Вкл» и раздел «Каталог и обновления»
+/// (доступные для установки и моды с новой версией).
+public enum CatalogFilter { All = 0, Installed = 1, Updates = 2, Disabled = 3, Problems = 4, Enabled = 5, Catalog = 6 }
 
 public static class CatalogView
 {
@@ -489,6 +491,8 @@ public static class CatalogView
         CatalogFilter.Updates => !m.Available && hasUpdate != null && hasUpdate(m),
         CatalogFilter.Disabled => !m.Available && !(isOn?.Invoke(m.Id) ?? m.Enabled),
         CatalogFilter.Problems => !m.Available && hasProblem != null && hasProblem(m),
+        CatalogFilter.Enabled => !m.Available && (isOn?.Invoke(m.Id) ?? m.Enabled),
+        CatalogFilter.Catalog => m.Available || hasUpdate != null && hasUpdate(m),
         _ => true,
     };
 

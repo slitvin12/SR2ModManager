@@ -106,7 +106,7 @@ internal sealed class Model
         var ls = LogFor(m);
         if (ls != null && ls.Errors > 0)
             p.Add((ls.Errors + " " + Theme.Plural(ls.Errors, "ошибка", "ошибки", "ошибок") + " в логе",
-                "В журнале прошлого запуска " + Theme.Count(ls.Errors, "ошибка", "ошибки", "ошибок") + (ls.LastError.Length > 0 ? ", последняя: " + OneLine(ls.LastError) : "") + " — см. вкладку «Логи».", Tone.Error));
+                "В журнале прошлого запуска " + Theme.Count(ls.Errors, "ошибка", "ошибки", "ошибок") + (ls.LastError.Length > 0 ? ", последняя: " + OneLine(ls.LastError) : "") + " — см. вкладку «Журнал игры».", Tone.Error));
         return p;
     }
 

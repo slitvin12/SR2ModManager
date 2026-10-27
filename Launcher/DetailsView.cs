@@ -411,7 +411,7 @@ internal sealed class DetailsView : Canvas
         if (!avail)
         {
             string logTitle = _m.GameRunning ? "ЖУРНАЛ ЗАПУЩЕННОЙ ИГРЫ" : "ЖУРНАЛ ПРОШЛОГО ЗАПУСКА";
-            y = Section(g, logTitle, x, y, w, _m.Log != null ? (Framed ? "Открыть лог" : "Строки в «Логах»") : null, () => OpenLogRequested?.Invoke());
+            y = Section(g, logTitle, x, y, w, _m.Log != null ? (Framed ? "Открыть лог" : "Строки в журнале") : null, () => OpenLogRequested?.Invoke());
             if (_m.Log == null)
             {
                 Theme.Text(g, "Журнал MelonLoader не найден — игра с модами ещё не запускалась", Theme.Body, new Rectangle(x, y - Px(2), w, Px(22)), Theme.Hint);

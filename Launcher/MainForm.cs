@@ -24,11 +24,12 @@ internal sealed class RenderOptions
     public bool Drop;
     public string? CatalogDir;   // --catalog: папка, которая в снимке играет роль «Загрузок»
     public DesignKind? Design;   // --design compact|fluent|slime (по умолчанию — «Компактный»; ui.json в снимке не читается)
-    public DockTab? Dock;        // --dock problems|hooks|logs|details: открытая вкладка нижней панели
+    public DockTab? Dock;        // --dock problems|hooks|logs|changes|details: открытая вкладка нижней панели
     public bool DockCollapsed;   // --dock-collapsed: панель свёрнута до полосы вкладок
     public string? Sort;         // --sort колонка[:asc|:desc], например «compat:desc»
     public bool Picker;          // --picker: открыт выбор дизайна (как после кнопки «Дизайн»)
     public DesignKind? SwitchTo; // --switch-design: после показа окна сменить стиль на лету (проверка смены без перезапуска)
+    public string? Toggle;       // --toggle id[,id…]: переключить отметки этих модов (только в памяти) — видно «не применено»
     public bool Bench { get; set; } // --bench: замеры — проверка совместимости и значки грузятся в фоне, как в обычном запуске
 }
 
@@ -157,7 +158,9 @@ internal sealed partial class MainForm : Form
         _status.Height = _root.Px(40);
 
         _root.Painter = PaintRoot;
-        _root.Controls.AddRange(new Control[] { _chips, _search, _filter, _allOn, _allOff, _designBtn, _banner, _list, _grip, _dock, _status, _launchVia, _more, _openMods, _openLogs, _saveBackup, _reset, _apply, _play });
+        _root.Controls.AddRange(new Control[] { _chips, _search, _filter, _allOn, _allOff, _designBtn, _banner, _list, _grip, _dock, _status, _launchVia, _more, _openMods, _openLogs, _saveBackup, _reset, _apply, _play,
+            _side, _bar, _cmd, _split });
+        SetupCompact();
         Controls.Add(_root);
         _root.Layout += (_, _) => DoLayout();
 
@@ -203,7 +206,7 @@ internal sealed partial class MainForm : Form
         _catalogDebounce.Tick += (_, _) => { _catalogDebounce.Stop(); StartCatalogScan(); };
 
         // перетаскивание файлов модов в окно
-        foreach (Control c in new Control[] { this, _root, _chips, _filter, _banner, _list, _grip, _dock, _details, _problems, _hooks, _logs, _status })
+        foreach (Control c in new Control[] { this, _root, _chips, _filter, _banner, _list, _grip, _dock, _details, _problems, _hooks, _logs, _changes, _status, _side, _bar })
         {
             c.AllowDrop = true;
             c.DragEnter += OnDragEnter;
@@ -213,6 +216,7 @@ internal sealed partial class MainForm : Form
         }
         // элементы, созданные до выбора стиля (поля формы), — в цвета активного дизайна
         Theme.Retint(this, paletteBefore, Theme.P);
+        SyncDesignChrome();
         HandleCreated += (_, _) => ApplyTitleBar();
 
         _m.GameRunning = render?.AssumeRunning ?? ModStore.IsGameRunning();
@@ -225,6 +229,8 @@ internal sealed partial class MainForm : Form
             if (render.Filter >= 0) _filterKind = (CatalogFilter)render.Filter;
             StartCatalogScan(); // в снимке — синхронно: ModManager\Library и папка --catalog
             if (render.Search != null) _search.Text = render.Search;
+            foreach (var id in (render.Toggle ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (_m.Find(id) is { } tm) _m.Sel[tm.Id] = !_m.On(tm.Id);
             RefreshUi();
             if (render.Select != null) _list.Select(render.Select);
             if (render.Toast != null) Toast(Tone.Ok, render.Toast);
@@ -322,11 +328,18 @@ internal sealed partial class MainForm : Form
         UpdateBanner();
         UpdateStatus();
         UpdateFooter();
+        SyncCompactChrome();
         SyncDockTools();
         RefreshDock();
         if (!keepDetails) _details.Invalidate();
         string rs = RootSig();
         if (rs != _rootSig) { _rootSig = rs; _root.Invalidate(); }
+        if (Flat)
+        {   // «Компактный»: наборы — в боковой панели, раскладка зависит только от баннера и ширины вкладок
+            int sidePx = SidePx(), cw = _root.ClientSize.Width - sidePx;
+            if (_banner.Visible != _lastBanner || _filter.PreferredWidth() != _lastFilterW || _banner.Visible && BannerHeight(cw) != _banner.Height || sidePx != _side.Width) DoLayout();
+            return;
+        }
         int lw = _root.ClientSize.Width - 2 * _root.Px(22);   // ширина, как в DoLayout
         int ch = _chips.MeasureHeight(Math.Max(100, lw));
         if (ch != _lastChipsH || _banner.Visible != _lastBanner || _filter.PreferredWidth() != _lastFilterW
@@ -343,37 +356,61 @@ internal sealed partial class MainForm : Form
         CatalogFilter.Updates => "Требуют обновления",
         CatalogFilter.Disabled => "Отключенные",
         CatalogFilter.Problems => "Проблемы",
+        CatalogFilter.Enabled => "Включённые",
+        CatalogFilter.Catalog => "Каталог и обновления",
         _ => "Все",
     };
 
     /// Капсулы фильтров со счётчиками. «Проблемы» появляются, только когда они есть (или этот фильтр уже выбран).
+    /// В «Компактном» — вкладки «Все / Вкл / Выкл / Проблемы / Обновления»; «Каталог и обновления» — раздел боковой
+    /// панели (тогда ни одна вкладка не выбрана).
     private void SyncFilterItems()
     {
         int inst = _m.Mods.Count, avail = _m.Available.Count, upd = CountIn(CatalogFilter.Updates),
             off = CountIn(CatalogFilter.Disabled), prob = CountIn(CatalogFilter.Problems);
         int ready = _m.Updates.Values.Count(u => u.CanInstall);
-        var kinds = new List<CatalogFilter> { CatalogFilter.All, CatalogFilter.Installed, CatalogFilter.Updates, CatalogFilter.Disabled };
-        if (prob > 0 || _filterKind == CatalogFilter.Problems) kinds.Add(CatalogFilter.Problems);
+        bool flat = Flat;
+        List<CatalogFilter> kinds;
+        if (flat)
+        {
+            if (_filterKind == CatalogFilter.Installed) _filterKind = CatalogFilter.All;
+            kinds = new List<CatalogFilter> { CatalogFilter.All, CatalogFilter.Enabled, CatalogFilter.Disabled, CatalogFilter.Problems, CatalogFilter.Updates };
+        }
+        else
+        {
+            if (_filterKind is CatalogFilter.Enabled or CatalogFilter.Catalog) _filterKind = CatalogFilter.All;
+            kinds = new List<CatalogFilter> { CatalogFilter.All, CatalogFilter.Installed, CatalogFilter.Updates, CatalogFilter.Disabled };
+            if (prob > 0 || _filterKind == CatalogFilter.Problems) kinds.Add(CatalogFilter.Problems);
+        }
+        string updTip = upd == 0 ? "Новых версий не найдено: менеджер ищет их в ModManager\\Library, «Загрузках» и среди сохранённых копий"
+            : ready > 0 ? "Есть версия новее — её можно поставить одной кнопкой" + (upd > ready ? "; остальные выглядят устаревшими по журналу игры" : "")
+            : "По журналу игры похоже, что мод собран под другую версию игры или MelonLoader";
+        string offTip = "Выключенные: лежат в Mods\\Disabled (или выключатся после «Применить») — игра их не загружает";
+        string probTip = "Несовместимость с MelonLoader/игрой, не хватает зависимостей, ошибки в журнале игры, лишние копии";
+        string allTip = avail > 0 ? $"Установленные ({inst}) и доступные для установки ({avail}) — из ModManager\\Library и «Загрузок»"
+                                  : "Все установленные моды. Доступные для установки появятся, когда в ModManager\\Library или «Загрузках» найдутся файлы модов";
         _filter.Items.Clear();
         foreach (var k in kinds)
-            _filter.Items.Add(k switch
+            _filter.Items.Add(flat ? k switch
+            {
+                CatalogFilter.Enabled => new Segmented.Item("Вкл", (inst - off).ToString(), "Включённые моды — их загрузит игра (с учётом ещё не применённых отметок)"),
+                CatalogFilter.Disabled => new Segmented.Item("Выкл", off.ToString(), offTip),
+                CatalogFilter.Problems => new Segmented.Item("Проблемы", prob.ToString(), probTip, Tone.Warn) { Icon = VIcon.Warning },
+                CatalogFilter.Updates => new Segmented.Item("Обновления", upd.ToString(), updTip, Tone.Info) { Icon = VIcon.CircleDown },
+                _ => new Segmented.Item("Все", (inst + avail).ToString(), allTip),
+            } : k switch
             {
                 CatalogFilter.Installed => new Segmented.Item(FilterName(k), inst.ToString(), "Моды в папке Mods — включённые и выключенные"),
-                CatalogFilter.Updates => new Segmented.Item(FilterName(k), upd.ToString(),
-                    upd == 0 ? "Новых версий не найдено: менеджер ищет их в ModManager\\Library, «Загрузках» и среди сохранённых копий"
-                    : ready > 0 ? "Есть версия новее — её можно поставить одной кнопкой" + (upd > ready ? "; остальные выглядят устаревшими по журналу игры" : "")
-                    : "По журналу игры похоже, что мод собран под другую версию игры или MelonLoader", Tone.Info),
-                CatalogFilter.Disabled => new Segmented.Item(FilterName(k), off.ToString(), "Выключенные: лежат в Mods\\Disabled (или выключатся после «Применить») — игра их не загружает"),
-                CatalogFilter.Problems => new Segmented.Item(FilterName(k), prob.ToString(), "Несовместимость с MelonLoader/игрой, не хватает зависимостей, ошибки в журнале игры, лишние копии", Tone.Warn),
-                _ => new Segmented.Item(FilterName(k), (inst + avail).ToString(),
-                    avail > 0 ? $"Установленные ({inst}) и доступные для установки ({avail}) — из ModManager\\Library и «Загрузок»"
-                              : "Все установленные моды. Доступные для установки появятся, когда в ModManager\\Library или «Загрузках» найдутся файлы модов"),
+                CatalogFilter.Updates => new Segmented.Item(FilterName(k), upd.ToString(), updTip, Tone.Info),
+                CatalogFilter.Disabled => new Segmented.Item(FilterName(k), off.ToString(), offTip),
+                CatalogFilter.Problems => new Segmented.Item(FilterName(k), prob.ToString(), probTip, Tone.Warn),
+                _ => new Segmented.Item(FilterName(k), (inst + avail).ToString(), allTip),
             });
         _filterKinds.Clear();
         _filterKinds.AddRange(kinds);
-        if (!kinds.Contains(_filterKind)) _filterKind = CatalogFilter.All;
+        if (!kinds.Contains(_filterKind) && !(flat && _filterKind == CatalogFilter.Catalog)) _filterKind = CatalogFilter.All;
         _filter.Selected = kinds.IndexOf(_filterKind);
-        string fs = _filter.Selected + "|" + string.Join("|", _filter.Items.Select(i => i.Text + "#" + i.Badge + "#" + (int)i.Tone + "#" + i.Tip));
+        string fs = _filter.Selected + "|" + string.Join("|", _filter.Items.Select(i => i.Text + "#" + i.Badge + "#" + (int)i.Tone + "#" + i.Tip + "#" + i.Icon));
         if (fs != _filterSig) { _filterSig = fs; _filter.Invalidate(); }
     }
 
@@ -422,10 +459,12 @@ internal sealed partial class MainForm : Form
     {
         _list.EmptyHappy = false;
         _list.EmptyAction = "";
+        _list.EmptyIcon = VIcon.None;
         _emptyAct = null;
         if (!q.IsEmpty)
         {
             _list.EmptyTitle = "Ничего не найдено";
+            _list.EmptyIcon = VIcon.Search;
             int elsewhere = _filterKind == CatalogFilter.All ? 0 : CatalogView.Build(_m.Mods, _m.Available, CatalogFilter.All, q, _m.On, _m.HasUpdate, _m.HasProblem).Count;
             if (elsewhere > 0)
             {
@@ -460,10 +499,25 @@ internal sealed partial class MainForm : Form
                 _list.EmptyTitle = "Проблем нет";
                 _list.EmptyText = "Зависимости на месте, конфликтов нет, в журнале прошлого запуска ошибок нет.";
                 break;
+            case CatalogFilter.Enabled when _m.Mods.Count > 0:
+                _list.EmptyTitle = "Включённых модов нет";
+                _list.EmptyText = "Все моды выключены — игра запустится без модов (ваниль). Отметьте нужные во вкладке «Все» или выберите набор слева.";
+                _list.EmptyAction = "Показать все";
+                _emptyAct = () => SetFilter(CatalogFilter.All);
+                break;
+            case CatalogFilter.Catalog:
+                _list.EmptyHappy = true;
+                _list.EmptyTitle = "Каталог пуст";
+                _list.EmptyIcon = VIcon.Download;
+                _list.EmptyText = "Новых версий и модов для установки не найдено. Скачайте мод (.dll или .zip) в «Загрузки» или положите в ModManager\\Library — он появится здесь.";
+                _list.EmptyAction = "Открыть Library";
+                _emptyAct = () => Report(Shell.OpenFolder(_store.LibraryDir));
+                break;
             default:
                 if (_m.Mods.Count == 0)
                 {
                     _list.EmptyTitle = "В папке Mods пока нет модов";
+                    _list.EmptyIcon = VIcon.Download;
                     _list.EmptyText = "Перетащите сюда .dll или .zip — менеджер сам разложит файлы: моды в Mods, плагины в Plugins, библиотеки в UserLibs.";
                     _list.EmptyAction = "Установить из файла…";
                     _emptyAct = PickInstall;
@@ -591,6 +645,7 @@ internal sealed partial class MainForm : Form
         {
             var acts = _toastActions.Select(a => (a.Item1, (Action)(() => { _toastUntil = default; a.Item2(); UpdateStatus(); }))).ToArray();
             _status.Set(_toastTone, _toast, null, acts);
+            SetBarMessage(true);
             return;
         }
         if (_m.Warnings.Count > 0)
@@ -599,6 +654,7 @@ internal sealed partial class MainForm : Form
             string msg = string.Join("   •   ", _m.Warnings);
             if (fixable) _status.Set(Tone.Warn, msg, null, ("Включить нужные", FixDeps));
             else _status.Set(Tone.Warn, msg);
+            SetBarMessage(true);
             return;
         }
         var diff = Diff();
@@ -609,6 +665,7 @@ internal sealed partial class MainForm : Form
                 ? (planned ? " — запланировано, применится при следующем запуске игры." : " — нажмите «Запланировать», чтобы применить при следующем запуске.")
                 : (planned ? " — запланировано из игры, нажмите «Применить» или «Играть»." : " — нажмите «Применить» или «Играть».");
             _status.Set(Tone.Info, "Изменения: " + DiffText(diff) + tail, Theme.GSync, ("Сбросить", ResetChanges));
+            SetBarMessage(false);
             return;
         }
         int all = _m.Mods.Count, on = _m.OnCount;
@@ -616,6 +673,7 @@ internal sealed partial class MainForm : Form
             ? "Модов нет. Перетащите .dll или .zip в окно, чтобы установить."
             : $"Включено {on} из {Theme.Count(all, "мода", "модов", "модов")}" + (_m.GameRunning ? " — так же, как в запущенной игре." : " — изменений нет.") + "  Пробел — вкл/выкл, Ctrl+Enter — играть.";
         _status.Set(Tone.Neutral, text, Theme.GInfo);
+        SetBarMessage(false);
     }
 
     private void UpdateBanner()
@@ -623,7 +681,8 @@ internal sealed partial class MainForm : Form
         var pend = PendingDiff();
         string? msg = null; Tone tone = Tone.Info; string glyph = Theme.GClock;
         var acts = new List<(string, Action)>();
-        if (_m.GameRunning)
+        bool flat = Flat;
+        if (_m.GameRunning && (!flat || pend.Count > 0 || _m.PluginStaged))
         {
             msg = pend.Count > 0
                 ? "Игра запущена. Запланировано: " + DiffText(pend) + " — применится при следующем запуске."
@@ -631,7 +690,7 @@ internal sealed partial class MainForm : Form
             if (_m.PluginStaged) msg += " Новая версия плагина менеджера встанет после выхода из игры.";
             if (pend.Count > 0) acts.Add(("Отменить план", CancelPlan));
         }
-        else if (pend.Count > 0)
+        else if (pend.Count > 0 && !_m.GameRunning)
         {
             msg = "Запланировано" + (_m.Pending?.Source == "in-game" ? " из игры" : "") + ": " + DiffText(pend) + ". Применится при «Применить», «Играть» или следующем запуске игры.";
             acts.Add(("Отменить план", CancelPlan));
@@ -646,7 +705,7 @@ internal sealed partial class MainForm : Form
             msg = "Плагин менеджера не найден в Plugins — панель модов в игре (F5) и запланированные изменения работать не будут. Переустановите менеджер (build.ps1 -Install).";
             tone = Tone.Warn; glyph = Theme.GWarning;
         }
-        else
+        else if (!flat)   // в «Компактном» новые версии — во вкладке «Обновления» и разделе «Каталог и обновления»
         {
             var ups = _m.Updates.Values.Where(u => u.CanInstall).OrderBy(u => _m.NameOf(u.Id)).ToList();
             string key = string.Join("|", ups.Select(u => u.Id + "@" + u.Version));
@@ -677,8 +736,10 @@ internal sealed partial class MainForm : Form
         _play.Text = run ? "Игра запущена" : "Играть";
         _play.Enabled = !run;
         _play.Tip = run ? "Сначала закройте игру" : (changes > 0 ? "Применить изменения и запустить игру (Ctrl+Enter)" : "Запустить игру (Ctrl+Enter)");
-        _reset.Visible = changes > 0 || PendingDiff().Count > 0;
-        LayoutFooter();
+        _reset.Visible = !Flat && (changes > 0 || PendingDiff().Count > 0);
+        _split.Set(run ? "Игра запущена" : "Играть", run ? "" : _m.Cfg.LaunchVia == "exe" ? "напрямую" : "Steam", !run, _play.Tip);
+        if (Flat) { if (_split.PreferredWidth() != _lastSplitW && _root.Width > 0) DoLayout(); }
+        else LayoutFooter();
     }
 
     // ───────── раскладка ─────────
@@ -688,6 +749,7 @@ internal sealed partial class MainForm : Form
     private void DoLayout()
     {
         if (_root.Width <= 0) return;
+        if (Flat) { LayoutCompact(); return; }
         int P(float v) => _root.Px(v);
         int W = _root.ClientSize.Width, H = _root.ClientSize.Height;
         int L = P(22), R = W - P(22);
@@ -784,12 +846,14 @@ internal sealed partial class MainForm : Form
     private int BannerHeight(int width)
     {
         int actW = _banner.Actions.Sum(a => Theme.Measure(a.Text, Theme.ButtonFont).Width + _root.Px(30));
-        return Theme.Measure(_banner.Message, Theme.Body).Width > width - _root.Px(56) - actW ? _root.Px(54) : _root.Px(42);
+        bool two = Theme.Measure(_banner.Message, Theme.Body).Width > width - _root.Px(56) - actW;
+        if (Flat) return two ? _root.Px(52) : _root.Px(38);
+        return two ? _root.Px(54) : _root.Px(42);
     }
 
     private void LayoutFooter()
     {
-        if (_root.Width <= 0) return;
+        if (_root.Width <= 0 || Flat) return;
         int P(float v) => _root.Px(v);
         int W = _root.ClientSize.Width, H = _root.ClientSize.Height;
         int L = P(22), R = W - P(22);
@@ -829,6 +893,13 @@ internal sealed partial class MainForm : Form
 
     private void PaintRoot(Graphics g, RootView v)
     {
+        if (Flat)
+        {   // «Компактный»: корень виден только как фон верхней полосы — остальное закрывают панели
+            int th = v.Px(TopBarH), one = Math.Max(1, v.Px(1));
+            using (var b = new SolidBrush(Theme.HeaderBg)) g.FillRectangle(b, 0, 0, v.Width, th);
+            using (var b = new SolidBrush(Theme.Line)) g.FillRectangle(b, 0, th - one, v.Width, one);
+            return;
+        }
         int P(float x) => v.Px(x);
         int W = v.Width, H = v.Height;
         var design = Theme.Design;
@@ -1426,7 +1497,7 @@ internal sealed partial class MainForm : Form
             if (Dialogs.Ask(this, $"Удалить набор «{p.Name}»?", "Удаляется только набор — сами моды остаются на месте.", new[] { "Удалить", "Отмена" }, 0, Tone.Warn, 1, Look.DangerFill) != 0) return;
             _m.Cfg.Profiles.Remove(p); SaveCfg(); RefreshUi();
         }, true, Theme.CoralText);
-        menu.Show(_chips, pt);
+        menu.Show(Flat ? _side : _chips, pt);
     }
 
     private void ProfileShortcut(Profile p)
@@ -1474,6 +1545,13 @@ internal sealed partial class MainForm : Form
     {
         _menu?.Dispose();
         var menu = _menu = Menus.Create(this);
+        AddMoreItems(menu);
+        _menuAnchor = null;
+        ShowMenu(menu, _more);
+    }
+
+    private void AddMoreItems(ContextMenuStrip menu)
+    {
         Menus.Add(menu, "Установить мод из файла…", Theme.GDownload, PickInstall, true, null, "Ctrl+O");
         Menus.Add(menu, "Обновить список", Theme.GRefresh, () => { Reload(true); StartCatalogScan(); Toast(Tone.Ok, "Список обновлён."); }, true, null, "F5");
         Menus.Separator(menu);
@@ -1498,7 +1576,6 @@ internal sealed partial class MainForm : Form
         Menus.Add(menu, "Журнал менеджера", Theme.GHistory, () => Report(Shell.Open(_store.LogPath)), File.Exists(_store.LogPath));
         Menus.Separator(menu);
         Menus.Add(menu, "О менеджере и горячие клавиши", Theme.GInfo, About);
-        menu.Show(_more, new Point(0, 0), ToolStripDropDownDirection.AboveRight);
     }
 
     private void About()
@@ -1508,17 +1585,19 @@ internal sealed partial class MainForm : Form
             "Пробел / Enter — включить или выключить выбранный мод\n" +
             "↑ ↓ — выбор мода, Del — удалить в корзину\n" +
             "Ctrl+F или / — поиск (Esc — очистить, Enter или ↓ — к списку), можно просто начать печатать\n" +
+            "Ctrl+K — все команды (применить, сбросить, включить или выключить все, установка, наборы, папки)\n" +
             "F5 — обновить список, Ctrl+O — установить мод из файла\n" +
             "Ctrl+S — применить, Ctrl+Enter — применить и играть\n" +
             "Перетащите .dll или .zip в окно — мод установится сам\n" +
             "Доступные моды и новые версии ищутся в ModManager\\Library и «Загрузках» (за 60 дней);\n" +
             "  свои папки — «catalogFolders» в profiles.json, «scanDownloads»: false — не смотреть «Загрузки»\n" +
             "Правая кнопка по набору — переименовать, перезаписать, ярлык\n\n" +
-            "Дизайн: «Компактный», «Fluent» или «Слаймовый» — кнопка «Дизайн», Ctrl+Shift+D — следующий;\n" +
+            "Дизайн: «Компактный», «Fluent» или «Слаймовый» — кнопка «Дизайн» (в «Компактном» — «Настройки» слева), Ctrl+Shift+D — следующий;\n" +
             "  выбор, вкладка и высота нижней панели хранятся в UserData\\ModManager\\ui.json\n" +
             "В таблице щелчок по заголовку колонки — сортировка (ещё щелчок — обратно, третий — без сортировки)\n" +
-            "Нижняя панель: Ctrl+1 — «Проблемы», Ctrl+2 — «Хуки Harmony», Ctrl+3 — «Логи», Ctrl+4 — «Детали»\n" +
-            "  (или двойной щелчок по моду), Ctrl+J — свернуть или развернуть, высота — потянуть за полоску над панелью\n\n" +
+            "Нижняя панель: Ctrl+1 — «Проблемы», Ctrl+2 — «Хуки Harmony», Ctrl+3 — «Журнал игры», Ctrl+4 — «Изменения»,\n" +
+            "  Ctrl+5 — «Детали»" +
+            " (или двойной щелчок по моду), Ctrl+J — свернуть или развернуть, высота — потянуть за полоску над панелью\n\n" +
             "В игре: F5 — панель модов (" + (string.IsNullOrEmpty(_m.PluginVersion) ? "плагин не установлен" : "плагин v" + _m.PluginVersion) + ").", Tone.Neutral);
     }
 
@@ -1578,7 +1657,8 @@ internal sealed partial class MainForm : Form
             if (_dock.Active == DockTab.Logs) SyncDockTools();
         }
         if (_toastUntil != default && DateTime.Now >= _toastUntil) { _toastUntil = default; UpdateStatus(); }
-        if (_tick % 20 == 0 || running) _root.Invalidate(new Rectangle(_root.Width / 2, 0, _root.Width / 2, _root.Px(Theme.Spec.HeaderH)));
+        if (Flat) { if (_tick % 4 == 0 || running) SyncCompactChrome(); }
+        else if (_tick % 20 == 0 || running) _root.Invalidate(new Rectangle(_root.Width / 2, 0, _root.Width / 2, _root.Px(Theme.Spec.HeaderH)));
     }
 
     private void OnFs(object? sender, FileSystemEventArgs e)
@@ -1634,7 +1714,9 @@ internal sealed partial class MainForm : Form
             case Keys.Control | Keys.D1: case Keys.Control | Keys.NumPad1: ShowDockTab(DockTab.Problems, true); return true;
             case Keys.Control | Keys.D2: case Keys.Control | Keys.NumPad2: ShowDockTab(DockTab.Hooks, true); return true;
             case Keys.Control | Keys.D3: case Keys.Control | Keys.NumPad3: ShowDockTab(DockTab.Logs, true); return true;
-            case Keys.Control | Keys.D4: case Keys.Control | Keys.NumPad4: ShowDockTab(DockTab.Details, true); return true;
+            case Keys.Control | Keys.D4: case Keys.Control | Keys.NumPad4: ShowDockTab(DockTab.Changes, true); return true;
+            case Keys.Control | Keys.D5: case Keys.Control | Keys.NumPad5: ShowDockTab(DockTab.Details, true); return true;
+            case Keys.Control | Keys.K: CommandsMenu(); return true;
             case Keys.Escape:
                 // в поиске: первый Esc стирает запрос, второй — возвращает к списку; вне поиска — просто стирает
                 if (_search.IsFocused) { if (_search.Text.Length > 0) _search.Text = ""; else FocusList(); return true; }
@@ -1879,7 +1961,7 @@ internal sealed partial class MainForm : Form
     }
 
     /// Подпись того, что рисует корень (шапка): перерисовывать его, только когда она изменилась.
-    private string RootSig() => string.Join("|", Theme.Generation, _m.GameRunning, _m.GameStarted?.Ticks ?? 0, _m.PluginStaged, _m.PluginVersion,
+    private string RootSig() => Flat ? "flat|" + Theme.Generation : string.Join("|", Theme.Generation, _m.GameRunning, _m.GameStarted?.Ticks ?? 0, _m.PluginStaged, _m.PluginVersion,
         _m.Mods.Count, _m.Available.Count, _m.Log?.LoaderVersion, _m.Log?.GameVersion);
 
     // ───────── журналы MelonLoader ─────────
@@ -1918,7 +2000,7 @@ internal sealed partial class MainForm : Form
         Menus.Separator(menu);
         Menus.Add(menu, "MelonPreferences.cfg — настройки модов", Theme.GSettings, () => Report(Shell.Open(_store.PreferencesPath)), File.Exists(_store.PreferencesPath));
         Menus.Add(menu, "Журнал менеджера", Theme.GHistory, () => Report(Shell.Open(_store.LogPath)), File.Exists(_store.LogPath));
-        menu.Show(_openLogs.Visible ? _openLogs : _more, new Point(0, 0), ToolStripDropDownDirection.AboveRight);
+        ShowMenu(menu, _openLogs.Visible ? _openLogs : _more);
     }
 
     // ───────── бэкапы сейвов ─────────
@@ -1942,6 +2024,7 @@ internal sealed partial class MainForm : Form
     {
         _status.Set(Tone.Info, text, glyph);
         _status.Update();
+        if (Flat) { SetBarMessage(true); _bar.Invalidate(); _bar.Update(); }
     }
 
     /// Бэкап сейвов перед изменением модов (обновление, импорт набора). Если сейвы не менялись с прошлого
@@ -2027,7 +2110,7 @@ internal sealed partial class MainForm : Form
         Menus.Add(menu, "Проверить целостность бэкапов (SHA-256)", Theme.GCheck, VerifySaveBackups, list.Count > 0);
         Menus.Add(menu, "Папка бэкапов сейвов", Theme.GFolder, () => { try { Directory.CreateDirectory(SaveBackupDir); } catch { } Report(Shell.OpenFolder(SaveBackupDir)); });
         Menus.Add(menu, "Папка сейвов игры", Theme.GFolder, () => Report(Shell.OpenFolder(root!)), root != null);
-        menu.Show(_saveBackup.Visible ? _saveBackup : _more, new Point(0, 0), ToolStripDropDownDirection.AboveRight);
+        ShowMenu(menu, _saveBackup.Visible ? _saveBackup : _more);
     }
 
     private void VerifySaveBackups()
