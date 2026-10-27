@@ -76,7 +76,7 @@ internal sealed partial class MainForm
             SyncDesignChrome();
             _rootSig = ""; _chipsSig = ""; _filterSig = ""; _dockBadgeSig = "";
             _rootLayoutKey = default;
-            RefreshUi(); // вкладки фильтра у стилей разные («Вкл/Выкл…» и «Установленные…»), строка состояния, панели
+            RefreshUi(); // боковая панель, вкладки, строка состояния, панели — в размерах и цветах нового стиля
             ResumeLayout(false);
             DoLayout();
             _dock.Relayout();
@@ -100,12 +100,12 @@ internal sealed partial class MainForm
     {
         var k = Designs.Next(Theme.Design);
         ApplyDesign(k, true);
-        Toast(Tone.Ok, "Дизайн: «" + Designs.Get(k).Name + "». Ctrl+Shift+D — следующий, кнопка «Дизайн» — все варианты.");
+        Toast(Tone.Ok, "Дизайн: «" + Designs.Get(k).Name + "». Ctrl+Shift+D — следующий, все варианты — «Настройки» слева.");
     }
 
     private void OpenDesignPicker(Control? anchor = null)
     {
-        anchor ??= Flat ? _cmd : _designBtn.Visible ? _designBtn : _more;
+        anchor ??= _cmd;
         DesignPicker.Show(anchor, k => ApplyDesign(k, true));
     }
 
@@ -272,13 +272,13 @@ internal sealed partial class MainForm
         _root.Update();
     }
 
-    /// Высота панели в раскладке: сохранённая (по умолчанию ~38% места под список, в «Компактном» — треть), не меньше 150 px,
-    /// список — не меньше 140 px.
+    /// Высота панели в раскладке: сохранённая (по умолчанию — треть места под список, у карточек и капсул чуть меньше:
+    /// они выше строк таблицы), не меньше 150 px, список — не меньше 140 px.
     private int DockHeightFor(int area)
     {
         if (_dock.Collapsed) return _dock.BarH;
         int P(float v) => _root.Px(v);
-        int want = _ui.DockHeight > 0 ? P(_ui.DockHeight) : area * (Flat ? 336 : 380) / 1000;
+        int want = _ui.DockHeight > 0 ? P(_ui.DockHeight) : area * (Flat ? 336 : 310) / 1000;
         int max = area - P(10) - P(140);
         return Math.Max(_dock.BarH, Math.Min(Math.Max(want, P(150)), max));
     }
@@ -436,54 +436,7 @@ internal sealed partial class MainForm
     private static string IssueTip(CompatIssue i)
         => i.Title + "\n" + i.Text + (i.Fix.Length > 0 ? "\nЧто сделать: " + i.Fix : "");
 
-    private List<RowsView.Row> BuildProblemRows(out int errors)
-    {
-        if (Flat) return BuildFlatProblemRows(out errors);
-        var rows = new List<RowsView.Row>();
-        errors = 0;
-        string? sel = _list.SelectedId;
-        var env = _m.Env?.Issues.Where(i => i.Level >= CompatLevel.Warning).OrderByDescending(i => i.Level).ToList() ?? new List<CompatIssue>();
-        if (env.Count > 0)
-        {
-            rows.Add(new RowsView.Row { Key = "h:env", Header = true, Title = "ОКРУЖЕНИЕ", Right = env.Count.ToString(), Tip = "MelonLoader, .NET, библиотеки и сборки игры — общие для всех модов" });
-            foreach (var i in env)
-            {
-                var tone = i.Level == CompatLevel.Error ? Tone.Error : Tone.Warn;
-                if (tone == Tone.Error) errors++;
-                rows.Add(new RowsView.Row
-                {
-                    Key = "env:" + i.Code + ":" + i.Title, Glyph = tone == Tone.Error ? Theme.GError : Theme.GWarning, Tone = tone,
-                    Title = EnvArea(i), Text = i.Title + (i.Text.Length > 0 ? " — " + i.Text : ""), Badge = i.Badge, BadgeTone = tone,
-                    Tip = IssueTip(i), Copy = EnvArea(i) + ": " + i.Title + ". " + i.Text + (i.Fix.Length > 0 ? " Что сделать: " + i.Fix : ""),
-                });
-            }
-        }
-        var items = new List<(ModEntry M, string Badge, string Text, Tone Tone, string Tip, string Key)>();
-        foreach (var m in _m.Mods)
-        {
-            foreach (var (badge, text, tone) in _m.ProblemDetails(m)) items.Add((m, badge, text, tone, text, "p:" + m.Id + ":" + badge));
-            foreach (var i in _m.CompatBadges(m))
-                items.Add((m, i.Badge, i.Title + (i.Text.Length > 0 ? " — " + i.Text : ""), i.Level == CompatLevel.Error ? Tone.Error : Tone.Warn, IssueTip(i), "c:" + m.Id + ":" + i.Code + ":" + i.Badge));
-        }
-        if (items.Count > 0)
-        {
-            rows.Add(new RowsView.Row { Key = "h:mods", Header = true, Title = "МОДЫ", Right = items.Count.ToString(), Tip = "Зависимости, конфликты, совместимость с MelonLoader и игрой, ошибки в журнале" });
-            foreach (var it in items.OrderByDescending(x => x.Tone == Tone.Error).ThenBy(x => x.M.DisplayName, StringComparer.CurrentCultureIgnoreCase))
-            {
-                if (it.Tone == Tone.Error) errors++;
-                rows.Add(new RowsView.Row
-                {
-                    Key = it.Key, Glyph = it.Tone == Tone.Error ? Theme.GError : Theme.GWarning, Tone = it.Tone,
-                    Title = it.M.DisplayName, Text = it.Text, Badge = it.Badge, BadgeTone = it.Tone, ModId = it.M.Id,
-                    Mark = sel != null && it.M.Id.Equals(sel, StringComparison.OrdinalIgnoreCase),
-                    Tip = it.M.DisplayName + ": " + it.Tip, Copy = it.M.DisplayName + ": " + it.Text,
-                });
-            }
-        }
-        return rows;
-    }
-
-    // «Компактный»: плоский список без заголовков разделов — у строки значок, о чём речь и кнопки «что сделать».
+    // Проблемы — плоский список без заголовков разделов: у строки значок, о чём речь и кнопки «что сделать».
     // Конфликт хуков двух модов — одна строка «A ↔ B», а не по строке у каждого.
 
     private static readonly HashSet<string> WontLoad = new(StringComparer.Ordinal)
@@ -539,7 +492,7 @@ internal sealed partial class MainForm
         menu.Show(Cursor.Position);
     }
 
-    private List<RowsView.Row> BuildFlatProblemRows(out int errors)
+    private List<RowsView.Row> BuildProblemRows(out int errors)
     {
         int err = 0;
         string? sel = _list.SelectedId;
@@ -956,11 +909,11 @@ internal sealed partial class MainForm
         PlaceRenderPicker();
     }
 
-    /// Под кнопкой «Дизайн» (в «Компактном» — «Команды»), по её правому краю — как всплывающая панель в обычном запуске.
+    /// Под «Командами», по их правому краю — как всплывающая панель в обычном запуске.
     private void PlaceRenderPicker()
     {
         if (_renderPicker == null) return;
-        Control a = Flat ? _cmd : _designBtn;
+        Control a = _cmd;
         int x = Math.Max(_root.Px(8), a.Right - _renderPicker.Width);
         _renderPicker.Location = new Point(x, a.Bottom + _root.Px(6));
     }

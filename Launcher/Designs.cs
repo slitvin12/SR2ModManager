@@ -1,8 +1,12 @@
-// Designs.cs — три стиля оформления лаунчера. Стиль = палитра + вид списка модов + размеры и скругления:
-//  • «Компактный» (вариант C, по умолчанию) — тёмное плоское окно: наборы и разделы слева, таблица (~29 px строка,
-//    сортировка по колонкам), нижняя панель с проблемами и изменениями, строка состояния;
-//  • «Fluent» (вариант A) — светлые карточки средней плотности (~58 px) с описанием и бейджами статуса;
-//  • «Слаймовый» (вариант B) — капсулы в цветах игры: кремовый фон, тёмно-синий текст, бирюза и розовый слайм.
+// Designs.cs — три стиля оформления лаунчера. У всех одно устройство окна: слева наборы, разделы и окружение, сверху
+// вкладки-фильтры, «Команды» (Ctrl+K) и «Играть ▾», в середине список модов, под ним нижняя панель (проблемы, хуки,
+// журнал, изменения, подробности) и строка состояния. Стиль = палитра + вид списка + размеры, скругления и пластика:
+//  • «Компактный» (вариант C, по умолчанию) — тёмное плоское окно как у редактора кода, таблица (~29 px строка,
+//    сортировка по колонкам);
+//  • «Fluent» (вариант A) — светлое окно в духе «Параметров» Windows 11: поиск и навигация слева, заголовок страницы,
+//    вкладки с акцентной чертой, белые карточки (~58 px) с описанием и бейджами (MainForm.Shell.cs);
+//  • «Слаймовый» (вариант B) — кремовое окно в цветах игры: «парящая» боковая панель со слаймом, капсулы (~76 px),
+//    бирюза и розовый, строка состояния из капсул (MainForm.Shell.cs).
 // Выбор хранится в UserData\ModManager\ui.json и применяется сразу, без перезапуска (Theme.Use + Theme.Retint).
 using System.Collections.Generic;
 using System.Drawing;
@@ -40,7 +44,7 @@ internal sealed class DesignSpec
     public int CardRadius;    // скругление карточек (у капсул — половина высоты)
     public int PanelRadius;   // панели: подробности, вкладки, пустой список
     public int CtrlRadius;    // кнопки, поле поиска, сегменты; −1 — капсула
-    public int HeaderH;       // шапка окна
+    public int HeaderH;       // верхняя полоса над списком: фильтр, вкладки, «Команды», «Играть»
     public bool Shadows;      // мягкие тени у выбранной карточки и главной кнопки
     /// Плоское окно как у редактора кода: верхняя панель, боковая панель с наборами и разделами, таблица и нижняя
     /// панель без рамок и скруглений, строка состояния внизу («Компактный»).
@@ -99,16 +103,16 @@ internal static class Designs
 
     public static readonly DesignSpec Fluent = new()
     {
-        Kind = DesignKind.Fluent, Name = "Fluent", Variant = "A", Tagline = "Светлые карточки",
-        Description = "Карточки средней плотности ~58 px в стиле Windows 11: описание, бейджи совместимости и обновлений.",
-        Palette = FluentPalette, Mode = ListMode.Cards, RowH = 58, Gap = 4, CardRadius = 6, PanelRadius = 8, CtrlRadius = 4, HeaderH = 74, Shadows = false,
+        Kind = DesignKind.Fluent, Name = "Fluent", Variant = "A", Tagline = "Светлый, как Windows 11",
+        Description = "Светлое окно в духе «Параметров» Windows 11: поиск и разделы слева, крупный заголовок страницы, вкладки с акцентной чертой, белые карточки с бейджами.",
+        Palette = FluentPalette, Mode = ListMode.Cards, RowH = 58, Gap = 4, CardRadius = 6, PanelRadius = 8, CtrlRadius = 4, HeaderH = 104, Shadows = false,
     };
 
     public static readonly DesignSpec Slime = new()
     {
         Kind = DesignKind.Slime, Name = "Слаймовый", Variant = "B", Tagline = "Капсулы в цветах игры",
-        Description = "Скруглённые капсулы в цветах Slime Rancher 2: кремовый фон, бирюза и розовый слайм.",
-        Palette = SlimePalette, Mode = ListMode.Capsules, RowH = 76, Gap = 8, CardRadius = 38, PanelRadius = 16, CtrlRadius = -1, HeaderH = 92, Shadows = true,
+        Description = "Кремовое окно в цветах Slime Rancher 2: «парящая» боковая панель со слаймом и наборами-слаймиками, капсулы модов, бирюза и розовый, строка состояния из капсул.",
+        Palette = SlimePalette, Mode = ListMode.Capsules, RowH = 76, Gap = 8, CardRadius = 38, PanelRadius = 16, CtrlRadius = -1, HeaderH = 110, Shadows = true,
     };
 
     public static readonly IReadOnlyList<DesignSpec> All = new[] { Compact, Fluent, Slime };

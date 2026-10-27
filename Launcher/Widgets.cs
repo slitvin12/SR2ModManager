@@ -147,6 +147,9 @@ internal sealed class PillButton : Surface
     public VIcon Icon;                 // векторный значок вместо глифа (Outline-кнопки «Компактного» стиля)
     public string Keycap = "";         // клавиша справа рамкой («Ctrl+K»), только у Outline
     public bool ShowKeycap = true;
+    /// Заливка Outline-кнопки в покое (null — прозрачная): белая кнопка Fluent и «Слаймового» стилей.
+    /// У «Слаймового» такая кнопка ещё и с мягкой тенью, как главная.
+    public Color? Fill;
     public string? Tip { get => _tip; set { if (_tip == value) return; _tip = value; Tips.SetToolTip(this, value ?? ""); } }
     private string? _tip;
     private static ToolTip? _tips;
@@ -197,6 +200,9 @@ internal sealed class PillButton : Surface
                 bg = _down ? Theme.BeigeDark : _hover ? Theme.Beige : Color.Transparent; fg = Theme.NavySoft; break;
             case Look.Quiet:
                 bg = _down ? Theme.BeigeDark : _hover ? Theme.Beige : Theme.Paper; fg = Theme.Navy; border = Theme.Line; break;
+            case Look.Outline when Fill is { } fill:
+                bg = _down ? Theme.Mix(fill, Theme.BeigeDark, 0.8f) : _hover ? Theme.Mix(fill, Theme.Beige, 0.75f) : fill;
+                fg = Theme.Navy; border = Theme.Mix(Theme.Line, Theme.LineDark, _hover ? 0.9f : 0.5f); break;
             case Look.Outline:
                 bg = _down ? Theme.BeigeDark : _hover ? Theme.Beige : Color.Transparent; fg = _hover ? Theme.Navy : Theme.NavySoft; border = Theme.LineDark; break;
             default:
@@ -207,9 +213,9 @@ internal sealed class PillButton : Surface
             bg = Look == Look.Primary ? Theme.Mix(Theme.Teal, Theme.Cream, 0.55f) : bg.A == 0 ? bg : Theme.Mix(bg, Theme.Cream, 0.5f);
             fg = Look == Look.Primary ? Color.FromArgb(235, 255, 255, 255) : Theme.Hint;
         }
-        bool shadow = Look == Look.Primary && Theme.Spec.Shadows;
+        bool shadow = (Look == Look.Primary || Look == Look.Outline && Fill.HasValue) && Theme.Spec.Shadows;
         if (shadow && Enabled && !_down)
-            Theme.Shadow(g, new RectangleF(r.X + Px(3), r.Y + Px(3), r.Width - Px(6), r.Height - Px(5)), Theme.Radius(r.Height - Px(5), S), Px(6), 30);
+            Theme.Shadow(g, new RectangleF(r.X + Px(3), r.Y + Px(3), r.Width - Px(6), r.Height - Px(5)), Theme.Radius(r.Height - Px(5), S), Px(6), Look == Look.Primary ? 30 : 16);
         var body = shadow ? new RectangleF(r.X + Px(1), r.Y + Px(1), r.Width - Px(2), r.Height - Px(3)) : r;
         float rad = Theme.Radius(body.Height, S);
         Theme.FillRound(g, body, rad, bg);
@@ -335,10 +341,15 @@ internal sealed class Segmented : Canvas
     /// Selected = −1 — ни одна не выбрана (открыт раздел боковой панели).
     public bool Tabs { get => _tabs; set { if (_tabs == value) return; _tabs = value; Invalidate(); } }
     private bool _tabs;
+    /// Вкладки Fluent — как SelectorBar Windows 11: без дорожки, у выбранной полужирная подпись и короткая акцентная
+    /// черта снизу (плавно переезжает к выбранной), счётчики — в капсулах. Selected = −1 — ни одна не выбрана.
+    public bool Selector { get => _selector; set { if (_selector == value) return; _selector = value; _x.Snap(-1f); Invalidate(); } }
+    private bool _selector;
 
     public Segmented() { Height = Px(34); }
 
-    private int TabGap => Px(6);
+    private int TabGap => _selector ? Px(2) : Px(6);
+    private int SelBadgeW(string b) => Math.Max(Px(18), Theme.Measure(b, Theme.SmallBold).Width + Px(10));
 
     private int SegWidth(int i)
     {
@@ -346,6 +357,8 @@ internal sealed class Segmented : Canvas
         if (_tabs)
             return Px(10) + (it.Icon != VIcon.None ? Px(11) + Px(7) : 0) + Theme.Measure(it.Text, Theme.ButtonFont).Width
                    + (string.IsNullOrEmpty(it.Badge) ? 0 : Px(6) + Theme.Measure(it.Badge, Theme.Small).Width) + Px(10);
+        if (_selector)
+            return Px(12) + Theme.Measure(it.Text, Theme.ButtonFont).Width + (string.IsNullOrEmpty(it.Badge) ? 0 : Px(7) + SelBadgeW(it.Badge)) + Px(12);
         int w = Theme.Measure(it.Text, Theme.ButtonFont).Width + Px(26);
         if (!string.IsNullOrEmpty(it.Badge)) w += Theme.Measure(it.Badge, Theme.SmallBold).Width + Px(16);
         return w;
@@ -353,7 +366,7 @@ internal sealed class Segmented : Canvas
 
     public int PreferredWidth()
     {
-        if (_tabs) { int t = 0; for (int i = 0; i < Items.Count; i++) t += SegWidth(i) + (i > 0 ? TabGap : 0); return t; }
+        if (_tabs || _selector) { int t = 0; for (int i = 0; i < Items.Count; i++) t += SegWidth(i) + (i > 0 ? TabGap : 0); return t; }
         int w = Px(6); for (int i = 0; i < Items.Count; i++) w += SegWidth(i); return w;
     }
 
@@ -396,6 +409,43 @@ internal sealed class Segmented : Canvas
         }
     }
 
+    private void DrawSelector(Graphics g)
+    {
+        int h = Height, lineY = h - Px(4), x = 0, selX = -1;
+        for (int i = 0; i < Items.Count; i++)
+        {
+            var it = Items[i];
+            int w = SegWidth(i);
+            var sr = new Rectangle(x, 0, w, h);
+            bool sel = i == _selected;
+            string key = "seg" + i;
+            bool hov = IsHover(key);
+            if (hov && !sel) Theme.FillRound(g, new Rectangle(sr.X, Px(3), sr.Width, lineY - Px(4)), Px(4), Theme.Alpha(Theme.Navy, 10));
+            int cx = sr.X + Px(12), tw = Theme.Measure(it.Text, Theme.ButtonFont).Width;
+            Theme.Text(g, it.Text, sel ? Theme.ButtonFont : Theme.Body, new Rectangle(cx, 0, tw + 2, lineY), sel || hov ? Theme.Navy : Theme.NavySoft);
+            cx += tw + Px(7);
+            if (!string.IsNullOrEmpty(it.Badge))
+            {
+                var br = new Rectangle(cx, (lineY - Px(17)) / 2 + Px(1), SelBadgeW(it.Badge), Px(17));
+                bool lit = it.Badge != "0" && it.Tone is Tone.Warn or Tone.Error or Tone.Info;
+                var (bg, fg) = BadgeColors(it, sel);
+                if (!lit && !sel) bg = Theme.Mix(Theme.Beige, Theme.BeigeDark, 0.5f);
+                Theme.FillRound(g, br, br.Height / 2f, bg);
+                Theme.Text(g, it.Badge, Theme.SmallBold, br, fg, TextFormatFlags.HorizontalCenter);
+            }
+            if (sel) selX = sr.X + sr.Width / 2;
+            int idx = i;
+            AddHit(sr, key, () => { if (_selected != idx) { _selected = idx; _slide = true; Invalidate(); Changed?.Invoke(idx); } }, it.Tip);
+            x += w + TabGap;
+        }
+        // черта под выбранной вкладкой
+        if (selX < 0) { _x.Snap(-1f); _slide = false; return; }
+        if (_x.Target < 0 || !_slide && Math.Abs(_x.Target - selX) > 0.5f) _x.Snap(selX);
+        else if (_slide) _x.To(selX, 210, this);
+        _slide = false;
+        Theme.FillRound(g, new RectangleF(_x.Value - Px(9), lineY, Px(18), Px(3)), Px(1.5f), Theme.Teal);
+    }
+
     private (Color Bg, Color Fg) BadgeColors(Item it, bool sel)
     {
         bool lit = it.Badge != "0" && it.Tone is Tone.Warn or Tone.Error or Tone.Info;
@@ -408,22 +458,27 @@ internal sealed class Segmented : Canvas
     protected override void Draw(Graphics g)
     {
         if (_tabs) { DrawTabs(g); return; }
+        if (_selector) { DrawSelector(g); return; }
         var r = new RectangleF(0, 0, Width, Height);
         float tr = Theme.Radius(Height, S), ir = Math.Max(Px(2), tr - Px(3));
         Theme.FillRound(g, r, tr, TrackColor ?? Theme.Beige);
         if (Items.Count == 0) return;
-        _selected = Math.Clamp(_selected, 0, Items.Count - 1);
+        _selected = Math.Clamp(_selected, -1, Items.Count - 1);
 
-        // выделение: белая «таблетка», которая плавно едет к выбранному сегменту
-        int sx = Px(3);
-        for (int i = 0; i < _selected; i++) sx += SegWidth(i);
-        int swid = SegWidth(_selected);
-        if (_x.Target < 0 || !_slide && (Math.Abs(_x.Target - sx) > 0.5f || Math.Abs(_w.Target - swid) > 0.5f)) { _x.Snap(sx); _w.Snap(swid); }
-        else if (_slide) { _x.To(sx, 210, this); _w.To(swid, 210, this); }
-        _slide = false;
-        var pill = new RectangleF(_x.Value, Px(3), _w.Value, Height - Px(6));
-        if (!Theme.Dark) Theme.Shadow(g, pill, ir, Px(3), 14);
-        Theme.FillRound(g, pill, ir, Theme.Dark ? Theme.BeigeDark : Theme.Paper);
+        // выделение: белая «таблетка», которая плавно едет к выбранному сегменту (−1 — ни один не выбран)
+        if (_selected < 0) { _x.Snap(-1f); _slide = false; }
+        else
+        {
+            int sx = Px(3);
+            for (int i = 0; i < _selected; i++) sx += SegWidth(i);
+            int swid = SegWidth(_selected);
+            if (_x.Target < 0 || !_slide && (Math.Abs(_x.Target - sx) > 0.5f || Math.Abs(_w.Target - swid) > 0.5f)) { _x.Snap(sx); _w.Snap(swid); }
+            else if (_slide) { _x.To(sx, 210, this); _w.To(swid, 210, this); }
+            _slide = false;
+            var pill = new RectangleF(_x.Value, Px(3), _w.Value, Height - Px(6));
+            if (!Theme.Dark) Theme.Shadow(g, pill, ir, Px(3), 14);
+            Theme.FillRound(g, pill, ir, Theme.Dark ? Theme.BeigeDark : Theme.Paper);
+        }
 
         int x = Px(3);
         for (int i = 0; i < Items.Count; i++)
@@ -499,6 +554,9 @@ internal sealed class TextField : Surface
     /// «Компактный» стиль: лупа линией, клавиша-подсказка рамкой, поле поуже.
     public bool Flat { get => _flat; set { if (_flat == value) return; _flat = value; PerformLayout(); Invalidate(); } }
     private bool _flat;
+    /// Fluent: как поле ввода Windows 11 — снизу тёмная черта, в фокусе она становится акцентной и толще (без свечения).
+    public bool Underline { get => _underline; set { if (_underline == value) return; _underline = value; Invalidate(); } }
+    private bool _underline;
     private Color? _fill;
     /// Заливка поля (null — Theme.Paper активного стиля); вместе с ней перекрашивается и само поле ввода.
     public void SetFill(Color? c) { _fill = c; Box.BackColor = c ?? Theme.Paper; Invalidate(); Box.Invalidate(); }
@@ -606,9 +664,22 @@ internal sealed class TextField : Surface
         float f = _focusT.Value;
         Color fill = FillColor, line = _flat ? Theme.Mix(Theme.Line, Theme.LineDark, 0.45f) : Theme.Line;
         Theme.FillRound(g, r, rad, fill);
-        if (f > 0.01f) // мягкое свечение внутри рамки, пока поле в фокусе
-            Theme.StrokeRound(g, RectangleF.Inflate(r, -Px(2), -Px(2)), Math.Max(1f, rad - Px(2)), Theme.Alpha(Theme.Teal, (int)(44 * f)), Math.Max(2f, 3f * S));
-        Theme.StrokeRound(g, r, rad, Theme.Mix(line, Theme.Teal, f), Math.Max(1f, S) * (1f + 0.55f * f));
+        if (_underline)
+        {
+            Theme.StrokeRound(g, r, rad, line, Math.Max(1f, S));
+            using var path = Theme.RoundRect(r, rad);
+            var st = g.Save();
+            g.SetClip(path, System.Drawing.Drawing2D.CombineMode.Intersect);
+            float lh = Math.Max(1f, S) * (1f + f);
+            using (var b = new SolidBrush(Theme.Mix(Theme.Mix(line, Theme.NavySoft, 0.6f), Theme.Teal, f))) g.FillRectangle(b, 0, Height - lh, Width, lh);
+            g.Restore(st);
+        }
+        else
+        {
+            if (f > 0.01f) // мягкое свечение внутри рамки, пока поле в фокусе
+                Theme.StrokeRound(g, RectangleF.Inflate(r, -Px(2), -Px(2)), Math.Max(1f, rad - Px(2)), Theme.Alpha(Theme.Teal, (int)(44 * f)), Math.Max(2f, 3f * S));
+            Theme.StrokeRound(g, r, rad, Theme.Mix(line, Theme.Teal, f), Math.Max(1f, S) * (1f + 0.55f * f));
+        }
         if (!SearchMode) return;
         if (_flat) Theme.Icon(g, VIcon.Search, new RectangleF(Px(11), (Height - Px(13)) / 2f, Px(13), Px(13)), Theme.Mix(Theme.Hint, Theme.TealText, f));
         else Theme.Glyph(g, Glyph, new Rectangle(Px(12), 0, Px(18), Height), Theme.Mix(Theme.Hint, Theme.TealText, f));
@@ -787,10 +858,15 @@ internal sealed class SplitPlay : Canvas
 
     protected override void Draw(Graphics g)
     {
-        var r = new RectangleF(0, 0, Width, Height);
-        float rad = Theme.Radius(Height, S);
-        int ax = Width - ArrowW;
-        Color body = MainEnabled ? Theme.Teal : Theme.Mix(Theme.Teal, Theme.HeaderBg, 0.55f);
+        // у «Слаймового» стиля — мягкая тень, как у главной кнопки: корпус на пиксель уже и на 3 px ниже края
+        bool shadow = Theme.Spec.Shadows;
+        var r = shadow ? new RectangleF(Px(1), Px(1), Width - Px(2), Height - Px(3)) : new RectangleF(0, 0, Width, Height);
+        var cr = Rectangle.Round(r);
+        float rad = Theme.Radius(r.Height, S);
+        int ax = cr.Right - ArrowW;
+        Color body = MainEnabled ? Theme.Teal : Theme.Mix(Theme.Teal, BackColor, 0.55f);
+        if (shadow && MainEnabled && !IsDown("main") && !IsDown("menu"))
+            Theme.Shadow(g, new RectangleF(Px(3), Px(3), Width - Px(6), Height - Px(5)), Theme.Radius(Height - Px(5), S), Px(6), 30);
         Theme.FillRound(g, r, rad, body);
         void Part(int x0, int x1, Color c)
         {
@@ -802,20 +878,20 @@ internal sealed class SplitPlay : Canvas
         if (MainEnabled && (IsHover("main") || IsDown("main"))) Part(0, ax, IsDown("main") ? Theme.Mix(Theme.TealDark, Theme.OnAccent, 0.12f) : Theme.TealDark);
         if (IsHover("menu") || IsDown("menu")) Part(ax, Width, IsDown("menu") ? Theme.Mix(Theme.TealDark, Theme.OnAccent, 0.12f) : Theme.Mix(body, Theme.TealDark, 0.8f));
         Color fg = MainEnabled ? Theme.OnAccent : Theme.Mix(Theme.OnAccent, body, 0.3f);
-        using (var lp = new Pen(Theme.Mix(Theme.Teal, Theme.OnAccent, 0.22f), Math.Max(1f, S))) g.DrawLine(lp, ax, Px(1), ax, Height - Px(1));
+        using (var lp = new Pen(Theme.Mix(Theme.Teal, Theme.OnAccent, 0.22f), Math.Max(1f, S))) g.DrawLine(lp, ax, cr.Y + Px(1), ax, cr.Bottom - Px(1));
         int isz = Px(11);
-        Theme.Icon(g, VIcon.Play, new RectangleF(Px(12), (Height - isz) / 2f, isz, isz), fg, Math.Max(1f, S));
-        int tx = Px(32), tw = Theme.Measure(Caption, Theme.ButtonFont).Width;
-        Theme.Text(g, Caption, Theme.ButtonFont, new Rectangle(tx, 0, Math.Min(tw + 2, ax - tx), Height), fg);
+        Theme.Icon(g, VIcon.Play, new RectangleF(cr.X + Px(12), cr.Y + (cr.Height - isz) / 2f, isz, isz), fg, Math.Max(1f, S));
+        int tx = cr.X + Px(32), tw = Theme.Measure(Caption, Theme.ButtonFont).Width;
+        Theme.Text(g, Caption, Theme.ButtonFont, new Rectangle(tx, cr.Y, Math.Min(tw + 2, ax - tx), cr.Height), fg);
         if (Sub.Length > 0)
         {
             int sx = tx + tw + Px(9);
-            if (sx < ax - Px(10)) Theme.Text(g, Sub, Theme.Small, new Rectangle(sx, 0, ax - Px(6) - sx, Height), Theme.Mix(fg, body, 0.32f));
+            if (sx < ax - Px(10)) Theme.Text(g, Sub, Theme.Small, new Rectangle(sx, cr.Y, ax - Px(6) - sx, cr.Height), Theme.Mix(fg, body, 0.32f));
         }
         int csz = Px(12);
-        Theme.Icon(g, VIcon.ChevronDown, new RectangleF(ax + (ArrowW - csz) / 2f, (Height - csz) / 2f, csz, csz), Theme.OnAccent, Math.Max(1.2f, 1.6f * S));
+        Theme.Icon(g, VIcon.ChevronDown, new RectangleF(ax + (ArrowW - csz) / 2f, cr.Y + (cr.Height - csz) / 2f, csz, csz), Theme.OnAccent, Math.Max(1.2f, 1.6f * S));
         AddHit(new Rectangle(0, 0, ax, Height), "main", MainEnabled ? () => Play?.Invoke() : null, _mainTip, null, MainEnabled);
-        AddHit(new Rectangle(ax, 0, ArrowW, Height), "menu", () => MenuRequested?.Invoke(), MenuTip);
+        AddHit(new Rectangle(ax, 0, Width - ax, Height), "menu", () => MenuRequested?.Invoke(), MenuTip);
     }
 }
 

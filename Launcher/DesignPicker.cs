@@ -245,150 +245,294 @@ internal sealed class DesignPicker : Canvas
         Bar(140, sy, 42, p.Hint, 0.9f);
     }
 
-    /// Миниатюра окна в палитре стиля: шапка, панель поиска, список (таблица / карточки / капсулы), нижняя панель, подвал.
+    /// Миниатюра окна в палитре и пластике стиля.
     private void DrawPreview(Graphics g, DesignSpec spec, Rectangle pr)
     {
         var p = spec.Palette;
-        float u = pr.Width / 184f;
-        RectangleF R(float x, float y, float w, float h) => new(pr.X + x * u, pr.Y + y * u, w * u, h * u);
-        void Fill(RectangleF r, float rad, Color c) => Theme.FillRound(g, r, rad * u, c);
-        void Stroke(RectangleF r, float rad, Color c) => Theme.StrokeRound(g, r, rad * u, c, Math.Max(1f, S * 0.8f));
-        float ctrl = spec.CtrlRadius < 0 ? 4f : Math.Min(4f, spec.CtrlRadius * 0.5f);
-
         using var frame = Theme.RoundRect(pr, Px(7));
         var st = g.Save();
         g.SetClip(frame, CombineMode.Intersect);
         using (var b = new SolidBrush(p.Cream)) g.FillRectangle(b, pr);
-        if (spec.Flat)
+        switch (spec.Kind)
         {
-            DrawFlatPreview(g, p, pr);
-            g.Restore(st);
-            Theme.StrokeRound(g, pr, Px(7), Theme.Alpha(p.LineDark, 200), Math.Max(1f, S));
-            return;
+            case DesignKind.Fluent: DrawFluentPreview(g, p, pr); break;
+            case DesignKind.Slime: DrawSlimePreview(g, p, pr); break;
+            default: DrawFlatPreview(g, p, pr); break;
         }
-        float hh = spec.HeaderH * 0.16f;   // шапка: 10–15 px миниатюры
+        g.Restore(st);
+        Theme.StrokeRound(g, pr, Px(7), Theme.Alpha(p.LineDark, 200), Math.Max(1f, S));
+    }
 
-        // шапка
-        float sd = spec.Kind == DesignKind.Compact ? 7f : spec.Kind == DesignKind.Fluent ? 8f : 9.5f;
-        Fill(R(6, (hh - sd) / 2f + 0.5f, sd, sd * 0.88f), sd / 2.2f, p.Pink);
-        Fill(R(9 + sd, hh / 2f - 2.4f, spec.Kind == DesignKind.Slime ? 42 : 36, 4.2f), 2f, Theme.Alpha(p.Navy, 220));
-        if (spec.Kind == DesignKind.Slime) Fill(R(9 + sd, hh / 2f + 3f, 22, 1.4f), 0.7f, p.Teal);
-        var chip = R(148, hh / 2f - 3.5f, 30, 7);
-        Fill(chip, 3.5f, p.Paper);
-        Stroke(chip, 3.5f, p.Line);
-        Fill(R(151.5f, hh / 2f - 1f, 2, 2), 1, p.Teal);
+    /// Миниатюра Fluent: навигация слева (слайм, поиск, наборы с акцентной чертой, разделы, окружение), заголовок
+    /// страницы с «Командами» и «Играть», вкладки с чертой снизу, белые карточки, нижняя панель, строка состояния.
+    private void DrawFluentPreview(Graphics g, Palette p, Rectangle pr)
+    {
+        float u = pr.Width / 184f, H = pr.Height / u;
+        RectangleF R(float x, float y, float w, float h) => new(pr.X + x * u, pr.Y + y * u, w * u, h * u);
+        void Fill(RectangleF r, float rad, Color c) { if (rad <= 0) { using var b = new SolidBrush(c); g.FillRectangle(b, r); } else Theme.FillRound(g, r, rad * u, c); }
+        void Stroke(RectangleF r, float rad, Color c) => Theme.StrokeRound(g, r, rad * u, c, Math.Max(1f, S * 0.8f));
+        void Bar(float x, float y, float w, Color c, float h = 1.5f) => Fill(R(x, y - h / 2f, w, h), h / 2f, c);
+        void Dot(float x, float y, float r, Color c) => Theme.Dot(g, pr.X + x * u, pr.Y + y * u, r * u, c);
+        Color sel = Theme.Mix(p.Cream, p.Navy, 0.07f), soft = Theme.Mix(p.Line, p.LineDark, 0.5f);
+        float barY = H - 4.4f;
 
-        // поиск, фильтры, «Дизайн»
-        float ty = hh + 3;
-        var search = R(6, ty, 54, 8);
-        Fill(search, ctrl, p.Paper);
-        Stroke(search, ctrl, p.Line);
-        Fill(R(64, ty, 20, 8), ctrl, p.Teal);
-        Fill(R(87, ty, 20, 8), ctrl, p.Beige);
-        Fill(R(110, ty, 20, 8), ctrl, p.Beige);
-        Fill(R(160, ty, 18, 8), ctrl, p.Beige);
-
-        // список
-        float ly = ty + 12, lh = 102 - 26 - ly;
-        switch (spec.Mode)
+        // навигация
+        Theme.Slime(g, R(3.6f, 3.2f, 6.6f, 5.8f), p.Pink);
+        Bar(12.5f, 5, 18, p.Navy, 1.4f);
+        Bar(12.5f, 7.6f, 12, p.Hint, 0.9f);
+        var search = R(3, 11, 39, 5.4f);
+        Fill(search, 0.9f, p.Paper);
+        Stroke(search, 0.9f, p.Line);
+        Fill(R(3.5f, 15.9f, 38, 0.5f), 0, Theme.Mix(p.Line, p.NavySoft, 0.6f));
+        Bar(6, 13.7f, 16, p.Hint, 0.9f);
+        Bar(4.5f, 21.4f, 8, p.NavySoft, 1f);
+        var dots = new[] { p.Teal, p.Hint, p.Hint, p.Pink, p.Orange };
+        for (int i = 0; i < 5; i++)
         {
-            case ListMode.Table:
-            {
-                var t = R(6, ly, 172, lh);
-                Fill(t, 3, p.Paper);
-                Fill(R(6, ly, 172, 6), 0, p.HeaderBg);
-                float rh = (lh - 6) / 6f;
-                for (int i = 0; i < 6; i++)
-                {
-                    float y = ly + 6 + i * rh;
-                    bool sel = i == 1;
-                    if (sel) Fill(R(6, y, 172, rh), 0, p.Selected);
-                    else if (i % 2 == 1) Fill(R(6, y, 172, rh), 0, p.RowAlt);
-                    if (sel) Fill(R(6, y, 1.2f, rh), 0, p.Teal);
-                    float cy = y + rh / 2f;
-                    Fill(R(9.5f, cy - 1.8f, 3.6f, 3.6f), 0.8f, i == 3 ? p.ToggleOff : p.Teal);
-                    Fill(R(17, cy - 1.2f, 30 + (i * 7) % 14, 2.4f), 1.2f, Theme.Alpha(p.Navy, 200));
-                    Fill(R(68, cy - 1f, 12, 2), 1, p.Hint);
-                    Fill(R(90, cy - 1f, 18, 2), 1, p.Hint);
-                    Theme.Dot(g, pr.X + 121 * u, pr.Y + cy * u, 1.3f * u, i == 4 ? p.Orange : p.Teal);
-                    Fill(R(124, cy - 1f, 16, 2), 1, i == 4 ? p.OrangeText : p.TealText);
-                    Fill(R(166, cy - 1f, 9, 2), 1, p.Hint);
-                }
-                Stroke(t, 3, p.Line);
-                break;
-            }
-            case ListMode.Cards:
-            {
-                float ch = (lh - 4) / 3f;
-                for (int i = 0; i < 3; i++)
-                {
-                    var c = R(6, ly + i * (ch + 2), 172, ch);
-                    float y = ly + i * (ch + 2);
-                    Fill(c, 2.5f, i == 0 ? p.Selected : p.Paper);
-                    Stroke(c, 2.5f, i == 0 ? p.Teal : p.Line);
-                    Fill(R(9, y + ch / 2f - 4f, 8, 8), 2, i == 1 ? p.BlueTint : p.PurpleTint);
-                    Fill(R(21, y + ch / 2f - 3.4f, 40, 2.6f), 1.3f, Theme.Alpha(p.Navy, 210));
-                    Fill(R(21, y + ch / 2f + 1.2f, 74 - i * 9, 1.9f), 1, p.Hint);
-                    Fill(R(128, y + ch / 2f - 2.6f, 22, 5.2f), 2.6f, i == 2 ? p.OrangeTint : p.TealTint);
-                    Fill(R(156, y + ch / 2f - 2.6f, 11, 5.2f), 2.6f, i == 2 ? p.ToggleOff : p.Teal);
-                }
-                break;
-            }
-            default:
-            {
-                float ch = (lh - 6) / 3f;
-                for (int i = 0; i < 3; i++)
-                {
-                    float y = ly + i * (ch + 3);
-                    var c = R(6, y, 172, ch);
-                    if (spec.Shadows) Fill(R(7, y + 1.2f, 170, ch), ch / 2f, Theme.Alpha(Theme.Ink, 22));
-                    Fill(c, ch / 2f, i == 0 ? p.Selected : p.Paper);
-                    if (i == 0) Stroke(c, ch / 2f, p.Teal);
-                    Theme.Dot(g, pr.X + (6 + ch / 2f) * u, pr.Y + (y + ch / 2f) * u, (ch / 2f - 2.2f) * u, i == 1 ? p.Blue : p.Pink);
-                    Fill(R(8 + ch + 3, y + ch / 2f - 3f, 42, 2.8f), 1.4f, Theme.Alpha(p.Navy, 210));
-                    Fill(R(8 + ch + 3, y + ch / 2f + 1.4f, 64 - i * 8, 1.9f), 1, p.Hint);
-                    Fill(R(152, y + ch / 2f - 3f, 18, 6f), 3f, i == 2 ? p.ToggleOff : p.Teal);
-                }
-                break;
-            }
+            float y = 23.4f + i * 4.6f;
+            if (i == 0) { Fill(R(2, y, 41, 4.2f), 0.8f, sel); Fill(R(2, y + 1.1f, 0.8f, 2f), 0.4f, p.Teal); }
+            Dot(6.2f, y + 2.1f, 0.75f, dots[i]);
+            Bar(9.5f, y + 2.1f, i == 0 ? 13 : 11 + (i * 4) % 7, p.Navy, 1.2f);
+            Bar(38.5f, y + 2.1f, 2, p.Hint, 1f);
+        }
+        Bar(4.5f, 48.6f, 8, p.NavySoft, 1f);
+        for (int i = 0; i < 5; i++)
+        {
+            float y = 50.6f + i * 4.6f;
+            Fill(R(4.6f, y + 1.2f, 1.8f, 1.8f), 0.4f, p.NavySoft);
+            Bar(9.5f, y + 2.1f, 12 + (i * 5) % 9, p.Navy, 1.2f);
+            if (i == 1) Fill(R(36.5f, y + 1.1f, 4.5f, 2f), 1f, p.Teal);
+        }
+        var env = R(3, barY - 15, 39, 12);
+        Fill(env, 1.2f, p.Paper);
+        Stroke(env, 1.2f, p.Line);
+        Dot(6, barY - 12, 0.7f, p.Teal);
+        Bar(8, barY - 12, 12, p.Navy, 1f);
+        Bar(5.5f, barY - 8.6f, 26, p.NavySoft, 0.9f);
+        Bar(5.5f, barY - 6.2f, 20, p.NavySoft, 0.9f);
+
+        // заголовок страницы, «Команды» и «Играть», вкладки с чертой
+        const float L = 50, Rr = 180;
+        Bar(L, 6.2f, 17, p.Navy, 3.2f);
+        Bar(L + 20, 6.8f, 18, p.Hint, 1f);
+        var cmd = R(131, 3.4f, 23, 6);
+        Fill(cmd, 0.9f, p.Paper);
+        Stroke(cmd, 0.9f, soft);
+        Bar(135, 6.4f, 13, p.Navy, 1.1f);
+        Fill(R(156, 3.4f, 24, 6), 0.9f, p.Teal);
+        Bar(160, 6.4f, 12, p.OnAccent, 1.2f);
+        float tx = L;
+        var tabs = new (float W, Color Badge)[]
+        {
+            (12, Theme.Mix(p.Beige, p.BeigeDark, 0.5f)), (9, Theme.Mix(p.Beige, p.BeigeDark, 0.5f)), (10, Theme.Mix(p.Beige, p.BeigeDark, 0.5f)),
+            (17, Theme.Mix(p.CoralTint, p.Coral, 0.35f)), (19, Theme.Mix(p.BlueTint, p.Blue, 0.35f)),
+        };
+        for (int i = 0; i < tabs.Length; i++)
+        {
+            Bar(tx, 14.6f, tabs[i].W - 4.4f, i == 0 ? p.Navy : p.NavySoft, 1.2f);
+            Fill(R(tx + tabs[i].W - 3.4f, 13.5f, 3.4f, 2.2f), 1.1f, i == 0 ? p.TealTint : tabs[i].Badge);
+            if (i == 0) Fill(R(tx + tabs[i].W / 2f - 3, 17.7f, 6, 0.8f), 0.4f, p.Teal);
+            tx += tabs[i].W + 4;
         }
 
-        // нижняя панель с вкладками
-        float dy = 102 - 23;
-        Fill(R(84, dy - 1.9f, 16, 0.9f), 0.45f, p.LineDark);
-        var dock = R(6, dy, 172, 21);
-        float drad = Math.Max(1.5f, spec.PanelRadius * 0.3f);
-        Fill(dock, drad, p.Paper);
-        using (var dp = Theme.RoundRect(dock, drad * u))
+        // карточки
+        float dockY = H * 0.66f;
+        var av = new[] { p.PurpleTint, p.BlueTint, p.PinkTint, p.TealTint, p.OrangeTint };
+        for (int i = 0; ; i++)
+        {
+            float y = 21 + i * 8.6f;
+            if (y + 7.6f > dockY - 2.5f) break;
+            bool s1 = i == 1, on = i != 2;
+            var c = R(L, y, Rr - L, 7.6f);
+            Fill(c, 1f, s1 ? p.Selected : p.Paper);
+            Stroke(c, 1f, s1 ? Theme.Mix(p.Teal, p.Paper, 0.3f) : p.Line);
+            Fill(R(L + 3, y + 2.6f, 5.4f, 2.6f), 1.3f, on ? p.Teal : p.ToggleOff);
+            Dot(on ? L + 7.1f : L + 4.3f, y + 3.9f, 0.9f, p.Paper);
+            Fill(R(L + 11, y + 1.8f, 4.2f, 4.2f), 0.9f, av[i % av.Length]);
+            Bar(L + 18, y + 2.7f, 18 + (i * 7) % 12, p.Navy, 1.4f);
+            Bar(L + 18, y + 5.2f, 40 - (i * 6) % 16, p.Hint, 0.9f);
+            Fill(R(Rr - 15, y + 2.6f, 12, 2.6f), 1.3f, i == 3 ? p.OrangeTint : on ? p.TealTint : p.Beige);
+        }
+
+        // нижняя панель: вкладки с чертой, строки с белыми кнопками
+        var dock = R(L, dockY, Rr - L, barY - 2.5f - dockY);
+        Fill(dock, 1.4f, p.Paper);
+        using (var dp = Theme.RoundRect(dock, 1.4f * u))
         {
             var s2 = g.Save();
             g.SetClip(dp, CombineMode.Intersect);
-            Fill(R(6, dy, 172, 6.5f), 0, p.HeaderBg);
+            Fill(R(L, dockY, Rr - L, 5.4f), 0, p.HeaderBg);
+            Fill(R(L, dockY + 5.4f, Rr - L, Math.Max(0.13f, 1f / u)), 0, p.Line);
             g.Restore(s2);
         }
+        Stroke(dock, 1.4f, p.Line);
         for (int i = 0; i < 4; i++)
         {
-            float tx = 10 + i * 21;
-            bool act = i == 3;
-            if (act && spec.CtrlRadius < 0) Fill(R(tx - 2, dy + 1, 20, 4.6f), 2.3f, p.TealTint);
-            Fill(R(tx, dy + 2.6f, 15, 1.5f), 0.75f, act ? (spec.CtrlRadius < 0 ? p.TealText : p.Navy) : p.NavySoft);
-            if (act && spec.CtrlRadius >= 0) Fill(R(tx, dy + 5.4f, 15, 1.1f), 0.5f, p.Teal);
+            float x = L + 3 + i * 17;
+            Bar(x, dockY + 2.7f, 11, i == 0 ? p.Navy : p.NavySoft, 1.1f);
+            if (i == 0) { Fill(R(x + 12, dockY + 1.7f, 3, 2f), 1f, Theme.Mix(p.CoralTint, p.Coral, 0.35f)); Fill(R(x + 2.5f, dockY + 4.5f, 6, 0.8f), 0.4f, p.Teal); }
         }
-        Fill(R(18, dy + 4.2f, 5, 2.6f), 1.3f, p.Coral);
-        Theme.Dot(g, pr.X + 12 * u, pr.Y + (dy + 10.5f) * u, 1.2f * u, p.Coral);
-        Fill(R(16, dy + 9.6f, 64, 1.8f), 0.9f, p.NavySoft);
-        Theme.Dot(g, pr.X + 12 * u, pr.Y + (dy + 15f) * u, 1.2f * u, p.Orange);
-        Fill(R(16, dy + 14.1f, 48, 1.8f), 0.9f, p.Hint);
-        Stroke(dock, drad, p.Line);
+        var tones = new[] { p.Coral, p.Orange, p.Orange };
+        for (int i = 0; i < 3; i++)
+        {
+            float y = dockY + 7f + i * 6.4f;
+            if (y + 5.6f > barY - 3f) break;
+            if (i == 0) Fill(R(L + 1.2f, y, Rr - L - 2.4f, 5.6f), 1f, p.TealTint);
+            float cy = y + 2.8f;
+            Dot(L + 4.5f, cy, 0.9f, tones[i]);
+            Bar(L + 8, cy, 16, p.Navy, 1.2f);
+            Bar(L + 30, cy, 50 - i * 8, p.NavySoft, 1.1f);
+            var br = R(Rr - 16, cy - 1.7f, 13, 3.4f);
+            Fill(br, 0.7f, p.Paper);
+            Stroke(br, 0.7f, soft);
+        }
 
-        // подвал
-        using (var b = new SolidBrush(p.Paper)) g.FillRectangle(b, R(0, 104, 184, 14));
-        using (var lp = new Pen(p.Line, Math.Max(1f, S * 0.8f))) g.DrawLine(lp, pr.X, pr.Y + 104 * u, pr.Right, pr.Y + 104 * u);
-        Fill(R(6, 107.5f, 30, 6), ctrl, p.Beige);
-        Fill(R(124, 107.5f, 18, 6), ctrl, p.Beige);
-        Fill(R(146, 106.5f, 32, 8), spec.CtrlRadius < 0 ? 4 : ctrl, p.Teal);
-        g.Restore(st);
-        Theme.StrokeRound(g, pr, Px(7), Theme.Alpha(p.LineDark, 200), Math.Max(1f, S));
+        // строка состояния
+        Fill(R(0, barY, 184, Math.Max(0.13f, 1f / u)), 0, p.Line);
+        float sy = barY + (H - barY) / 2f;
+        Dot(3, sy, 0.6f, p.Hint);
+        Bar(4.6f, sy, 12, p.Hint, 0.9f);
+        Bar(19, sy, 13, p.NavySoft, 0.9f);
+        Bar(140, sy, 42, p.Hint, 0.9f);
+    }
+
+    /// Миниатюра «Слаймового»: «парящая» белая боковая панель со слаймом, наборами-слаймиками и цветными кружками
+    /// разделов; сверху — капсулы поиска, «Команд» и «Играть», под ними — вкладки; капсулы модов, нижняя панель,
+    /// строка состояния из капсул.
+    private void DrawSlimePreview(Graphics g, Palette p, Rectangle pr)
+    {
+        float u = pr.Width / 184f, H = pr.Height / u;
+        RectangleF R(float x, float y, float w, float h) => new(pr.X + x * u, pr.Y + y * u, w * u, h * u);
+        void Fill(RectangleF r, float rad, Color c) { if (rad <= 0) { using var b = new SolidBrush(c); g.FillRectangle(b, r); } else Theme.FillRound(g, r, rad * u, c); }
+        void Stroke(RectangleF r, float rad, Color c) => Theme.StrokeRound(g, r, rad * u, c, Math.Max(1f, S * 0.8f));
+        void Bar(float x, float y, float w, Color c, float h = 1.5f) => Fill(R(x, y - h / 2f, w, h), h / 2f, c);
+        void Dot(float x, float y, float r, Color c) => Theme.Dot(g, pr.X + x * u, pr.Y + y * u, r * u, c);
+        Color shadow = Theme.Alpha(Theme.Ink, 20), soft = Theme.Mix(p.Line, p.LineDark, 0.5f);
+        float barY = H - 6.4f;
+
+        // боковая панель
+        Fill(R(3.2f, 3.8f, 42, barY - 3.8f), 3.6f, shadow);
+        Fill(R(2.6f, 2.6f, 42, barY - 3.8f), 3.6f, p.Paper);
+        Theme.Slime(g, R(5.2f, 5, 9.4f, 8.2f), p.Pink);
+        Bar(17, 7.2f, 20, p.Navy, 1.6f);
+        Bar(17, 10, 12, p.Hint, 0.8f);
+        Theme.HGradient(g, R(17, 12, 14, 0.9f), p.Teal, p.Pink);
+        Bar(6.4f, 18.4f, 7, p.Hint, 0.8f);
+        var cols = new[] { p.Teal, p.LineDark, p.Pink, p.Orange, p.Blue };
+        for (int i = 0; i < 5; i++)
+        {
+            float y = 20.4f + i * 4.8f;
+            if (i == 0) Fill(R(4.4f, y, 38.4f, 4.2f), 2.1f, p.TealTint);
+            Fill(R(6.4f, y + 0.9f, 3, 2.5f), 1.25f, cols[i]);
+            Bar(11.4f, y + 2.1f, i == 0 ? 13 : 10 + (i * 4) % 7, i == 0 ? p.TealText : p.Navy, 1.2f);
+            Fill(R(36.4f, y + 1.1f, 4.4f, 2f), 1f, i == 0 ? p.Paper : p.Beige);
+        }
+        Bar(6.4f, 46.2f, 7, p.Hint, 0.8f);
+        var tints = new[] { (p.TealTint, p.TealText), (p.PinkTint, p.Pink), (p.OrangeTint, p.OrangeText), (p.BlueTint, p.BlueText), (p.PurpleTint, p.PurpleText) };
+        for (int i = 0; i < 5; i++)
+        {
+            float y = 48.2f + i * 4.8f;
+            Dot(7.9f, y + 2.1f, 1.8f, tints[i].Item1);
+            Dot(7.9f, y + 2.1f, 0.6f, tints[i].Item2);
+            Bar(11.4f, y + 2.1f, 12 + (i * 5) % 9, p.Navy, 1.2f);
+            if (i == 1) Fill(R(36.4f, y + 1.1f, 4.4f, 2f), 1f, p.Pink);
+        }
+        Fill(R(4.6f, barY - 14.4f, 37.8f, 10.6f), 2.4f, p.Cream);
+        Dot(7.4f, barY - 11.2f, 0.7f, p.Teal);
+        Bar(9, barY - 11.2f, 12, p.Navy, 1f);
+        Bar(7, barY - 8.2f, 24, p.NavySoft, 0.9f);
+        Bar(7, barY - 5.8f, 18, p.NavySoft, 0.9f);
+
+        // поиск, «Команды», «Играть»; вкладки
+        const float L = 49, Rr = 181;
+        var search = R(L, 3, 76, 6.4f);
+        Fill(search, 3.2f, p.Paper);
+        Stroke(search, 3.2f, p.Line);
+        Bar(L + 4.4f, 6.2f, 24, p.Hint, 0.9f);
+        var cmd = R(128, 3, 22, 6.4f);
+        Fill(cmd, 3.2f, p.Paper);
+        Stroke(cmd, 3.2f, soft);
+        Bar(132, 6.2f, 13, p.Navy, 1.1f);
+        Fill(R(153.6f, 4, 27.4f, 6.4f), 3.2f, Theme.Alpha(Theme.Ink, 26));
+        Fill(R(153, 3, 28, 6.4f), 3.2f, p.Teal);
+        Bar(157.5f, 6.2f, 14, p.OnAccent, 1.2f);
+        Fill(R(L, 12.4f, 90, 5.8f), 2.9f, p.Beige);
+        Fill(R(L + 0.7f, 13.1f, 16.4f, 4.4f), 2.2f, p.Paper);
+        float tx = L + 3;
+        var segs = new (float W, Color Badge)[] { (16.4f, p.TealTint), (14, p.Paper), (15, p.Paper), (20, p.CoralTint), (22, p.BlueTint) };
+        for (int i = 0; i < segs.Length; i++)
+        {
+            Bar(tx, 15.3f, segs[i].W - 8.5f, i == 0 ? p.Navy : p.NavySoft, 1.1f);
+            Fill(R(tx + segs[i].W - 7.6f, 14.3f, 3.6f, 2f), 1f, segs[i].Badge);
+            tx += segs[i].W;
+        }
+
+        // капсулы модов
+        float dockY = H * 0.64f;
+        var av = new[] { p.Pink, p.Blue, p.Orange, p.Teal };
+        for (int i = 0; ; i++)
+        {
+            float y = 21.6f + i * 11.2f;
+            if (y + 9.6f > dockY - 2.5f) break;
+            bool s1 = i == 0, on = i != 2;
+            Fill(R(L + 0.6f, y + 1.2f, Rr - L - 1.2f, 9.6f), 4.8f, Theme.Alpha(Theme.Ink, s1 ? 26 : 14));
+            var c = R(L, y, Rr - L, 9.6f);
+            Fill(c, 4.8f, s1 ? p.Selected : p.Paper);
+            if (s1) Stroke(c, 4.8f, p.Teal);
+            Fill(R(L + 3.4f, y + 3.3f, 6.4f, 3f), 1.5f, on ? p.Teal : p.ToggleOff);
+            Dot(L + 15, y + 4.8f, 2.7f, Theme.Mix(av[i % av.Length], p.Paper, 0.7f));
+            Bar(L + 20, y + 3.4f, 20 + (i * 7) % 12, p.Navy, 1.4f);
+            Bar(L + 20, y + 6.3f, 38 - (i * 6) % 14, p.Hint, 0.9f);
+            Fill(R(Rr - 17, y + 3.4f, 13, 2.8f), 1.4f, on ? p.TealTint : p.Beige);
+        }
+
+        // нижняя панель: вкладки-капсулы, строки-плашки с кнопками-капсулами
+        var dock = R(L, dockY, Rr - L, barY - 2 - dockY);
+        Fill(dock, 3f, p.Paper);
+        using (var dp = Theme.RoundRect(dock, 3f * u))
+        {
+            var s2 = g.Save();
+            g.SetClip(dp, CombineMode.Intersect);
+            Fill(R(L, dockY, Rr - L, 5.6f), 0, p.HeaderBg);
+            g.Restore(s2);
+        }
+        Stroke(dock, 3f, p.Line);
+        for (int i = 0; i < 4; i++)
+        {
+            float x = L + 3 + i * 17;
+            if (i == 0) Fill(R(x - 1.4f, dockY + 1, 15.4f, 3.6f), 1.8f, p.TealTint);
+            Bar(x + 1, dockY + 2.8f, 10, i == 0 ? p.TealText : p.NavySoft, 1.1f);
+        }
+        var tones = new[] { p.Coral, p.Orange, p.Orange };
+        for (int i = 0; i < 3; i++)
+        {
+            float y = dockY + 7.2f + i * 6.2f;
+            if (y + 5.4f > barY - 3.5f) break;
+            if (i == 0) Fill(R(L + 1.4f, y, Rr - L - 2.8f, 5.4f), 2.7f, p.TealTint);
+            float cy = y + 2.7f;
+            Dot(L + 5.5f, cy, 1f, tones[i]);
+            Bar(L + 9, cy, 16, p.Navy, 1.2f);
+            Bar(L + 31, cy, 46 - i * 8, p.NavySoft, 1.1f);
+            Fill(R(Rr - 17, cy - 1.7f, 13, 3.4f), 1.7f, p.Beige);
+        }
+
+        // строка состояния — капсулы
+        float sy = barY + (H - barY) / 2f;
+        void Chip(float x, float w, Color bg, Color? line)
+        {
+            var r = R(x, sy - 2f, w, 4f);
+            Fill(r, 2f, bg);
+            if (line is { } l) Stroke(r, 2f, l);
+        }
+        Chip(2.6f, 22, p.Paper, p.Line);
+        Dot(5.2f, sy, 0.7f, p.Hint);
+        Bar(7, sy, 15, p.NavySoft, 0.9f);
+        Chip(27, 20, p.Paper, p.Line);
+        Bar(29.6f, sy, 15, p.NavySoft, 0.9f);
+        Chip(50, 27, p.OrangeTint, null);
+        Dot(52.8f, sy, 0.7f, p.Orange);
+        Bar(55, sy, 19, p.OrangeText, 0.9f);
+        Bar(140, sy, 40, p.Hint, 0.9f);
     }
 
     // ───────── выпадающая панель ─────────

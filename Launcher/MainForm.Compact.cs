@@ -1,8 +1,9 @@
-// MainForm.Compact.cs — «Компактный» стиль в духе редактора кода. Вместо шапки с наборами и подвала с кнопками:
+// MainForm.Compact.cs — устройство окна, общее для всех стилей, и «Компактный» стиль в духе редактора кода:
 //  • верхняя полоса — фильтр, вкладки-фильтры, «Команды» (Ctrl+K) и «Играть» со стрелкой (способ запуска, применить без запуска);
 //  • боковая панель — наборы модов, разделы (моды, каталог, бэкапы сейвов, журнал, настройки) и сведения об окружении;
 //  • строка состояния — игра, сколько включено, что не применено, сообщения и подсказки по клавишам.
-// Fluent и «Слаймовый» этих элементов не показывают — у них шапка и подвал из MainForm.cs.
+// Здесь же — меню «Команды», «Играть ▾» и «Настройки». Раскладка и отрисовка тех же элементов у Fluent и «Слаймового» —
+// в MainForm.Shell.cs.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -38,30 +39,34 @@ internal sealed partial class MainForm
         _split.Play += () => Commit(true);
         _split.MenuRequested += LaunchMenu;
         _split.MenuTip = "Способ запуска (Steam или напрямую), применить без запуска, сбросить изменения";
-        _side.Painter = PaintSide;
-        _bar.Painter = PaintBar;
-        _status.Changed += () => { if (Flat) _bar.Invalidate(); };
+        _side.Painter = (g, v) => { if (Flat) PaintSide(g, v); else PaintSideSoft(g, v); };
+        _bar.Painter = (g, v) => { if (Flat || !SlimeLook) PaintBar(g, v); else PaintBarSlime(g, v); };
+        _status.Changed += () => _bar.Invalidate();
     }
 
-    /// Элементы, которые есть только у одного вида окна: у «Компактного» — верхняя полоса, боковая панель и строка
-    /// состояния; у Fluent и «Слаймового» — шапка с наборами, подвал с кнопками и строка статуса над ним.
+    /// Элементы окна под активный стиль. Боковая панель, верхняя полоса и строка состояния — у всех стилей; прежние
+    /// шапка с наборами (_chips) и подвал с кнопками скрыты — они остались хранителями состояния (выбранный набор,
+    /// «можно ли применить», текст статуса), который показывают боковая панель, «Играть ▾» и строка состояния.
     private void SyncDesignChrome()
     {
-        bool flat = Flat;
-        foreach (var c in new Control[] { _chips, _designBtn, _launchVia, _more, _apply, _play, _status }) c.Visible = !flat;
-        if (flat) foreach (var c in new Control[] { _allOn, _allOff, _reset, _openMods, _openLogs, _saveBackup }) c.Visible = false;
-        foreach (var c in new Control[] { _side, _bar, _cmd, _split }) c.Visible = flat;
-        foreach (var c in new Control[] { _side, _bar, _cmd, _split }) c.BackColor = Theme.HeaderBg;
+        bool flat = Flat, fluent = Theme.Design == DesignKind.Fluent;
+        foreach (var c in new Control[] { _chips, _designBtn, _launchVia, _more, _apply, _play, _status, _allOn, _allOff, _reset, _openMods, _openLogs, _saveBackup }) c.Visible = false;
+        foreach (var c in new Control[] { _side, _bar, _cmd, _split }) c.Visible = true;
+        Color chrome = flat ? Theme.HeaderBg : Theme.Cream;
+        foreach (var c in new Control[] { _side, _bar, _cmd, _split }) c.BackColor = chrome;
+        _cmd.Fill = flat ? null : Theme.Paper;
         _filter.Tabs = flat;
-        _filter.BackColor = flat ? Theme.HeaderBg : Theme.Cream;
+        _filter.Selector = fluent;
+        _filter.BackColor = chrome;
         _search.Flat = flat;
-        _search.BackColor = flat ? Theme.HeaderBg : Theme.Cream;
+        _search.Underline = fluent;
+        _search.BackColor = chrome;
         _search.SetFill(flat ? Theme.Cream : null);
         _search.Placeholder = flat ? "Фильтр: имя, автор, хук..." : "Найти мод: название, автор, описание";
         _search.PlaceholderShort = flat ? "Фильтр…" : "Найти мод…";
         _search.Shortcut = flat ? "/" : "Ctrl+F";
         _banner.Square = flat;
-        foreach (var v in new[] { _problems, _hooks, _logs, _changes }) { v.BackColor = flat ? Theme.HeaderBg : Theme.Paper; v.Tall = flat && (v == _problems || v == _changes); }
+        foreach (var v in new[] { _problems, _hooks, _logs, _changes }) { v.BackColor = flat ? Theme.HeaderBg : Theme.Paper; v.Tall = v == _problems || v == _changes; }
         _problems.TitleW = flat ? 190 : 200;
         _details.BackColor = flat ? Theme.HeaderBg : Theme.Paper;
         _sideSig = _barSig = "";
@@ -135,9 +140,8 @@ internal sealed partial class MainForm
     }
 
     /// Перерисовать боковую панель и строку состояния, если то, что на них видно, изменилось.
-    private void SyncCompactChrome()
+    private void SyncShellChrome()
     {
-        if (!Flat) return;
         string ss = SideSig();
         if (ss != _sideSig) { _sideSig = ss; _side.Invalidate(); }
         string bs = BarSig();
@@ -148,7 +152,7 @@ internal sealed partial class MainForm
     {
         if (_barMessage == on) return;
         _barMessage = on;
-        if (Flat) _bar.Invalidate();
+        _bar.Invalidate();
     }
 
     // ───────── боковая панель ─────────
@@ -208,6 +212,7 @@ internal sealed partial class MainForm
           .Append('|').Append(_m.Mods.Count).Append('|').Append(CountIn(CatalogFilter.Catalog)).Append('|').Append(SavesCount());
         foreach (var p in _m.Cfg.Profiles) sb.Append('|').Append(p.Name).Append('#').Append(ProfileCount(p)).Append(p.All ? 'a' : '-').Append(p.Mods?.Count ?? 0);
         foreach (var l in EnvLines()) sb.Append('|').Append(l);
+        sb.Append('|').Append(EnvState());
         return sb.ToString();
     }
 
@@ -267,10 +272,7 @@ internal sealed partial class MainForm
                 Theme.Text(g, "изменён", Theme.TagFont, br, Theme.OrangeText, TextFormatFlags.HorizontalCenter);
             }
             var pp = p;
-            string what = p.All ? "все моды" : (p.Mods == null || p.Mods.Count == 0) ? "без модов (ваниль)" : Names(p.Mods);
-            string tip = p.Name + ": " + what + (hl && modified ? "\nОтметки уже отличаются от набора — правый щелчок → «Перезаписать текущим выбором» или «+» — новый набор" : "")
-                + "\nЩелчок — включить набор; правый щелчок — переименовать, перезаписать, ярлык, экспорт";
-            v.Zone(r, key, () => PickProfile(pp), tip, pt => ProfileMenu(pp, pt));
+            v.Zone(r, key, () => PickProfile(pp), ProfileTip(p, hl && modified), pt => ProfileMenu(pp, pt));
             y += pitch;
         }
         if (rows < profiles.Count)
@@ -296,22 +298,7 @@ internal sealed partial class MainForm
 
         // ── разделы
         Head("РАЗДЕЛЫ", h2);
-        int cat = CountIn(CatalogFilter.Catalog), saves = SavesCount();
-        bool inCat = _filterKind == CatalogFilter.Catalog;
-        var secs = new (string Key, VIcon Icon, string Text, string Count, bool Sel, Action<Rectangle> Click, string Tip, Action<Rectangle>? Right)[]
-        {
-            ("s:mods", VIcon.Grid, "Моды", _m.Mods.Count.ToString(), !inCat, _ => SetFilter(CatalogFilter.All),
-                "Установленные моды; вкладки сверху — все, включённые, выключенные, с проблемами, с обновлениями", null),
-            ("s:cat", VIcon.Download, "Каталог и обновления", cat > 0 ? cat.ToString() : "", inCat, _ => SetFilter(CatalogFilter.Catalog),
-                "Моды, доступные для установки, и новые версии установленных — из ModManager\\Library, «Загрузок» и своих папок", null),
-            ("s:saves", VIcon.Archive, "Бэкапы сейвов", saves > 0 ? saves.ToString() : "", false, r => { _menuAnchor = (_side, new Point(r.Right + P(4), r.Y)); SavesMenu(); },
-                "Сохранить сейвы игры в zip (с проверкой SHA-256) или восстановить из бэкапа", null),
-            ("s:log", VIcon.Doc, "Журнал игры", "", false, _ => ShowDockTab(DockTab.Logs),
-                "Журнал MelonLoader последнего запуска (Latest.log) — вкладка внизу (Ctrl+3). Правый щелчок — файлы журналов",
-                r => { _menuAnchor = (_side, new Point(r.Right + P(4), r.Y)); LogsMenu(); }),
-            ("s:set", VIcon.Gear, "Настройки", "", false, r => { _menuAnchor = (_side, new Point(r.Right + P(4), r.Y)); SettingsMenu(); },
-                "Дизайн окна, MelonPreferences.cfg, папки игры и модов, горячие клавиши", null),
-        };
+        var secs = SideSections(v);
         int secBottom = 0;
         for (int i = 0; i < secs.Length; i++)
         {
@@ -346,9 +333,38 @@ internal sealed partial class MainForm
                 Theme.Text(g, lines[j], Theme.Small, new Rectangle(P(16), (int)Math.Round(cy - P(9)), W - P(28), P(18)), Theme.Hint);
             }
             var er = new Rectangle(left, (int)(headCy - P(12)), rowW, (int)(H - P(12) - (headCy - P(12))));
-            string tip = _m.Env != null ? "Проверено: " + _m.Env.Summary + "\nЩелчок — вкладка «Проблемы»" : _m.CompatBusy ? "Идёт проверка окружения…" : "Окружение ещё не проверено";
-            v.Zone(er, "env", () => ShowDockTab(DockTab.Problems), tip, null, false);
+            v.Zone(er, "env", () => ShowDockTab(DockTab.Problems), EnvTip(), null, false);
         }
+    }
+
+    /// Разделы боковой панели: ключ зоны, значок, подпись, счётчик, выбран ли, щелчок (по прямоугольнику пункта — от него
+    /// открываются меню), подсказка, правый щелчок.
+    private (string Key, VIcon Icon, string Text, string Count, bool Sel, Action<Rectangle> Click, string Tip, Action<Rectangle>? Right)[] SideSections(PaintBox v)
+    {
+        int P(float x) => v.Px(x);
+        int cat = CountIn(CatalogFilter.Catalog), saves = SavesCount();
+        bool inCat = _filterKind == CatalogFilter.Catalog;
+        return new (string, VIcon, string, string, bool, Action<Rectangle>, string, Action<Rectangle>?)[]
+        {
+            ("s:mods", VIcon.Grid, "Моды", _m.Mods.Count.ToString(), !inCat, _ => SetFilter(CatalogFilter.All),
+                "Установленные моды; вкладки сверху — все, включённые, выключенные, с проблемами, с обновлениями", null),
+            ("s:cat", VIcon.Download, "Каталог и обновления", cat > 0 ? cat.ToString() : "", inCat, _ => SetFilter(CatalogFilter.Catalog),
+                "Моды, доступные для установки, и новые версии установленных — из ModManager\\Library, «Загрузок» и своих папок", null),
+            ("s:saves", VIcon.Archive, "Бэкапы сейвов", saves > 0 ? saves.ToString() : "", false, r => { _menuAnchor = (_side, new Point(r.Right + P(4), r.Y)); SavesMenu(); },
+                "Сохранить сейвы игры в zip (с проверкой SHA-256) или восстановить из бэкапа", null),
+            ("s:log", VIcon.Doc, "Журнал игры", "", false, _ => ShowDockTab(DockTab.Logs),
+                "Журнал MelonLoader последнего запуска (Latest.log) — вкладка внизу (Ctrl+3). Правый щелчок — файлы журналов",
+                r => { _menuAnchor = (_side, new Point(r.Right + P(4), r.Y)); LogsMenu(); }),
+            ("s:set", VIcon.Gear, "Настройки", "", false, r => { _menuAnchor = (_side, new Point(r.Right + P(4), r.Y)); SettingsMenu(); },
+                "Дизайн окна, MelonPreferences.cfg, папки игры и модов, горячие клавиши", null),
+        };
+    }
+
+    private string ProfileTip(Profile p, bool modified)
+    {
+        string what = p.All ? "все моды" : (p.Mods == null || p.Mods.Count == 0) ? "без модов (ваниль)" : Names(p.Mods);
+        return p.Name + ": " + what + (modified ? "\nОтметки уже отличаются от набора — правый щелчок → «Перезаписать текущим выбором» или «+» — новый набор" : "")
+            + "\nЩелчок — включить набор; правый щелчок — переименовать, перезаписать, ярлык, экспорт";
     }
 
     private void MoreProfilesMenu(int from, Point at)
@@ -484,13 +500,11 @@ internal sealed partial class MainForm
 
     // ───────── меню «Команды», «Играть ▾», «Настройки» ─────────
 
-    /// Открыть меню: у пункта боковой панели (если его вызвали оттуда), в «Компактном» — под «Командами»,
-    /// в остальных стилях — над кнопкой classic в подвале.
-    private void ShowMenu(ContextMenuStrip menu, Control classic)
+    /// Открыть меню: у пункта боковой панели (если его вызвали оттуда), иначе — под «Командами».
+    private void ShowMenu(ContextMenuStrip menu)
     {
         if (_menuAnchor is { } a) { _menuAnchor = null; menu.Show(a.C, a.P, ToolStripDropDownDirection.BelowRight); }
-        else if (Flat) menu.Show(_cmd, new Point(_cmd.Width, _cmd.Height + _root.Px(4)), ToolStripDropDownDirection.BelowLeft);
-        else menu.Show(classic, new Point(0, 0), ToolStripDropDownDirection.AboveRight);
+        else menu.Show(_cmd, new Point(_cmd.Width, _cmd.Height + _root.Px(4)), ToolStripDropDownDirection.BelowLeft);
     }
 
     private void CommandsMenu()
@@ -507,10 +521,12 @@ internal sealed partial class MainForm
         Menus.Separator(menu);
         Menus.Add(menu, "Включить все", Theme.GCheck, () => SetAll(true), _m.Mods.Count > 0);
         Menus.Add(menu, "Выключить все", Theme.GCancel, () => SetAll(false), _m.Mods.Count > 0);
+        int ready = _m.Updates.Values.Count(u => u.CanInstall);
+        if (ready > 0) Menus.Add(menu, ready == 1 ? "Обновить " + _m.NameOf(_m.Updates.Values.First(u => u.CanInstall).Id) : "Обновить все (" + ready + ")", Theme.GSync, UpdateAll);
         Menus.Separator(menu);
         AddMoreItems(menu);
         _menuAnchor = null;
-        ShowMenu(menu, _more);
+        ShowMenu(menu);
     }
 
     private void LaunchMenu()
@@ -555,6 +571,6 @@ internal sealed partial class MainForm
         Menus.Add(menu, "Папка игры", Theme.GFolder, () => Report(Shell.OpenFolder(_store.GameDir)));
         Menus.Separator(menu);
         Menus.Add(menu, "О менеджере и горячие клавиши", Theme.GInfo, About);
-        ShowMenu(menu, _more);
+        ShowMenu(menu);
     }
 }

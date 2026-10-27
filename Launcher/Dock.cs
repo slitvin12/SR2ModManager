@@ -446,7 +446,8 @@ internal sealed class RowsView : Canvas
     public bool StickToEnd;            // держать прокрутку у конца, если она уже там (журнал)
     public int LeadW;                  // ширина столбца Lead, px при 96 dpi (0 — нет столбца)
     public int TitleW;                 // ширина столбца заголовка, px при 96 dpi (0 — по тексту)
-    /// Высокие строки (46 px) «Компактного» стиля: значок, название, текст с разметкой и кнопки справа.
+    /// Высокие строки (46 px) — вкладки «Проблемы» и «Изменения»: значок, название, текст с разметкой и кнопки справа.
+    /// В «Компактном» — во всю ширину с линиями между строками, в остальных стилях — скруглённые плашки.
     public bool Tall { get => _tall; set { if (_tall == value) return; _tall = value; ClampScroll(); Invalidate(); } }
     private bool _tall;
     // Заглушка пустого списка. Смена текста сразу перерисовывает панель: фоновая проверка совместимости
@@ -472,7 +473,7 @@ internal sealed class RowsView : Canvas
 
     private Font RowFont => Mono ? Theme.Mono : Theme.Body;
     public int RowH => Mono ? Math.Max(Px(20), Theme.LineHeight(Theme.Mono) + Px(6)) : _tall ? Px(46) : Px(28);
-    private int Pad => _tall ? 0 : Px(4);
+    private int Pad => _tall && Theme.Spec.Flat ? 0 : Px(4);
     private int BarW => Px(10);
     private int ContentH => _rows.Count * RowH + Pad * 2;
     private int MaxScroll => Math.Max(0, ContentH - Height);
@@ -683,20 +684,35 @@ internal sealed class RowsView : Canvas
     {
         string key = "row:" + i;
         bool sel = i == _sel, hov = HoverKey != null && (HoverKey == key || HoverKey.StartsWith(key + ":", StringComparison.Ordinal));
-        int one = Math.Max(1, Px(1));
-        if (sel || hov) using (var b = new SolidBrush(sel ? Theme.TealTint : Theme.Mix(BackColor, Theme.Navy, 0.04f))) g.FillRectangle(b, r);
-        using (var b = new SolidBrush(Theme.Mix(BackColor, Theme.Line, 0.47f))) g.FillRectangle(b, r.X, r.Bottom - one, r.Width, one);
-        if (sel && Focused) using (var b = new SolidBrush(Theme.Teal)) g.FillRectangle(b, r.X, r.Y, Px(2), r.Height - one);
-        else if (row.Mark) using (var b = new SolidBrush(Theme.Alpha(Theme.Teal, 150))) g.FillRectangle(b, r.X, r.Y, Px(2), r.Height - one);
+        bool flat = Theme.Spec.Flat, capsule = Theme.Spec.CtrlRadius < 0, fluent = Theme.Design == DesignKind.Fluent;
+        int one = Math.Max(1, Px(1)), inset = flat ? 0 : Px(6);
+        if (flat)
+        {
+            if (sel || hov) using (var b = new SolidBrush(sel ? Theme.TealTint : Theme.Mix(BackColor, Theme.Navy, 0.04f))) g.FillRectangle(b, r);
+            using (var b = new SolidBrush(Theme.Mix(BackColor, Theme.Line, 0.47f))) g.FillRectangle(b, r.X, r.Bottom - one, r.Width, one);
+            if (sel && Focused) using (var b = new SolidBrush(Theme.Teal)) g.FillRectangle(b, r.X, r.Y, Px(2), r.Height - one);
+            else if (row.Mark) using (var b = new SolidBrush(Theme.Alpha(Theme.Teal, 150))) g.FillRectangle(b, r.X, r.Y, Px(2), r.Height - one);
+        }
+        else
+        {   // плашка с отступами: у Fluent — скругление карточек и акцентная черта слева, у «Слаймового» — капсула
+            var pr = new Rectangle(r.X + Px(4), r.Y + Px(2), r.Width - Px(8), r.Height - Px(4));
+            float prad = capsule ? pr.Height / 2f : Px(Math.Max(4, Theme.Spec.CardRadius));
+            if (sel || hov) Theme.FillRound(g, pr, prad, sel ? Theme.TealTint : Theme.RowHover);
+            if (sel && Focused) Theme.StrokeRound(g, pr, prad, Theme.Alpha(Theme.Teal, 110), Math.Max(1f, S));
+            if (row.Mark || sel && Focused)
+                Theme.FillRound(g, new RectangleF(pr.X + (capsule ? Px(9) : Px(1)), pr.Y + (pr.Height - Px(16)) / 2f, Px(3), Px(16)), Px(1.5f),
+                    sel && Focused ? Theme.Teal : Theme.Alpha(Theme.Teal, 150));
+            one = 0;
+        }
         var body = new Rectangle(r.X, r.Y, r.Width, r.Height - one);
         int isz = Px(15);
-        var ir = new RectangleF(r.X + Px(20) - isz / 2f, body.Y + (body.Height - isz) / 2f, isz, isz);
+        var ir = new RectangleF(r.X + inset + Px(20) - isz / 2f, body.Y + (body.Height - isz) / 2f, isz, isz);
         if (row.Icon != VIcon.None) Theme.Icon(g, row.Icon, ir, Icon(row.Tone));
         else if (row.Glyph.Length > 0) Theme.Glyph(g, row.Glyph, Rectangle.Round(RectangleF.Inflate(ir, Px(3), Px(3))), Icon(row.Tone), Theme.IconsSmall);
 
         // кнопки — справа налево, пока остаётся место под название
-        int tx = r.X + Px(46), colW = titleW > 0 ? titleW : Px(190);
-        int right = r.Right - Px(12);
+        int tx = r.X + inset + Px(46), colW = titleW > 0 ? titleW : Px(190);
+        int right = r.Right - Px(12) - inset;
         var acts = row.Actions;
         int shownFrom = acts?.Count ?? 0;
         var rects = new Rectangle[shownFrom];
@@ -726,9 +742,22 @@ internal sealed class RowsView : Canvas
             var ar = rects[j];
             string ak = key + ":a:" + j;
             bool ah = IsHover(ak), ad = IsDown(ak);
-            float rad = Math.Max(2f, Px(4));
-            Theme.FillRound(g, ar, rad, ad ? Theme.BeigeDark : ah ? Theme.Mix(Theme.Beige, Theme.BeigeDark, 0.6f) : Theme.Beige);
-            Theme.StrokeRound(g, ar, rad, ah ? Theme.Mix(Theme.LineDark, Theme.NavySoft, 0.35f) : Theme.LineDark, Math.Max(1f, S));
+            if (flat)
+            {
+                float rad = Math.Max(2f, Px(4));
+                Theme.FillRound(g, ar, rad, ad ? Theme.BeigeDark : ah ? Theme.Mix(Theme.Beige, Theme.BeigeDark, 0.6f) : Theme.Beige);
+                Theme.StrokeRound(g, ar, rad, ah ? Theme.Mix(Theme.LineDark, Theme.NavySoft, 0.35f) : Theme.LineDark, Math.Max(1f, S));
+            }
+            else if (fluent)
+            {   // обычная кнопка Windows 11: белая, с тонкой рамкой
+                float rad = Theme.Radius(ar.Height, S);
+                Theme.FillRound(g, ar, rad, ad ? Theme.Beige : ah ? Theme.Mix(Theme.Paper, Theme.Beige, 0.6f) : Theme.Paper);
+                Theme.StrokeRound(g, ar, rad, ah ? Theme.LineDark : Theme.Mix(Theme.Line, Theme.LineDark, 0.5f), Math.Max(1f, S));
+            }
+            else
+            {   // «Слаймовый»: бежевая капсула без рамки
+                Theme.FillRound(g, ar, ar.Height / 2f, ad ? Theme.BeigeDark : ah ? Theme.Mix(Theme.Beige, Theme.BeigeDark, 0.6f) : Theme.Beige);
+            }
             Theme.Text(g, acts![j].Text, Theme.ButtonFont, ar, Theme.Navy, TextFormatFlags.HorizontalCenter);
             var act = acts[j].Act;
             AddHit(ar, ak, () => { SelectIndex(idx, false); act(); });

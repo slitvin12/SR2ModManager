@@ -281,8 +281,8 @@ try
 
     // 17. поиск: раскладка, ё, порядок, подсветка
     ModEntry Fake(string id, string name, string author, string desc, string ver = "1.0.0") => new() { Id = id, FileName = id + ".dll", Name = name, Author = author, Description = desc, Version = ver, Readable = true, Kind = "Mod", Enabled = true };
-    var ct0 = Fake("CreatorToolkit", "Creator Toolkit", "sergltvn", "Меню создателя: игрок, спавн, ресурсы, погода", "0.6.0");
-    var sl0 = Fake("SlimeLive", "SlimeLive", "sergltvn", "Интерактив для TikTok LIVE: гонки слаймов", "0.5.1");
+    var ct0 = Fake("CreatorToolkit", "Creator Toolkit", "slitvin12", "Меню создателя: игрок, спавн, ресурсы, погода", "0.6.0");
+    var sl0 = Fake("SlimeLive", "SlimeLive", "slitvin12", "Интерактив для TikTok LIVE: гонки слаймов", "0.5.1");
     var mc0 = Fake("MinecraftHUD", "Minecraft HUD", "Steve", "Живой Minecraft внутри SR2 (F7 — HUD)");
     var rb0 = Fake("Rainbow", "Rainbow", "Ann", "Makes every slime rainbow");
     var yo0 = Fake("Yolka", "Ёлочная игрушка", "Дед Мороз", "Новогодний декор");
@@ -294,7 +294,7 @@ try
     Check(Find("creator tool").SequenceEqual(new[] { "CreatorToolkit" }) && Find("tool creator").SequenceEqual(new[] { "CreatorToolkit" }), "несколько слов — все должны найтись, порядок не важен");
     var slime = Find("slime");
     Check(slime.Count == 2 && slime[0] == "SlimeLive" && slime[1] == "Rainbow", "сначала совпадение в названии, потом в описании: " + string.Join(",", slime));
-    Check(Find("sergltvn").Count == 2 && Find("мороз").SequenceEqual(new[] { "Yolka" }), "поиск по автору");
+    Check(Find("slitvin12").Count == 2 && Find("мороз").SequenceEqual(new[] { "Yolka" }), "поиск по автору");
     Check(Find("v0.6").SequenceEqual(new[] { "CreatorToolkit" }) && Find("CreatorToolkit.dll").SequenceEqual(new[] { "CreatorToolkit" }), "поиск по версии и имени файла");
     Check(Find("zzz").Count == 0 && Find("   ").Count == 5, "нет совпадений → пусто; пустой запрос → все");
     var hl = ModSearch.Highlights("Creator Toolkit", ModSearch.Parse("tool"));
