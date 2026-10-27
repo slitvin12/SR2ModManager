@@ -6,6 +6,13 @@
 
 ![Главное окно, дизайн «Компактный»](docs/screenshots/main.png)
 
+Есть ещё два дизайна, «Fluent» и «Слаймовый». Переключаются на лету, без перезапуска ([подробнее](#дизайн-окна-и-нижняя-панель)):
+
+<p align="center">
+  <img src="docs/screenshots/design-fluent.png" alt="Дизайн «Fluent»" width="49%">
+  <img src="docs/screenshots/design-slime.png" alt="Дизайн «Слаймовый»" width="49%">
+</p>
+
 ## Содержание
 
 - [Возможности](#возможности)
@@ -72,7 +79,7 @@
 2. Соберите и установите менеджер:
 
 ```powershell
-git clone https://github.com/sergltvn-rgb/SR2ModManager.git
+git clone https://github.com/slitvin12/SR2ModManager.git
 cd SR2ModManager
 powershell -ExecutionPolicy Bypass -File build.ps1 -Install
 ```
@@ -111,10 +118,6 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -Install
 | **Слаймовый** | капсулы в цветах игры, с мягкими тенями |
 
 ![Выбор дизайна](docs/screenshots/design-picker.png)
-
-| Fluent | Слаймовый |
-|---|---|
-| ![Дизайн «Fluent»](docs/screenshots/design-fluent.png) | ![Дизайн «Слаймовый»](docs/screenshots/design-slime.png) |
 
 Внизу окна — панель с вкладками:
 
