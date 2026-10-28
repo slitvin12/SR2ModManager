@@ -219,6 +219,8 @@ public sealed class ModStore
     public string PendingPath => System.IO.Path.Combine(ConfigDir, "pending.json");
     public string LogPath => System.IO.Path.Combine(ConfigDir, "modmanager.log");
     public string GameExe => System.IO.Path.Combine(GameDir, "SlimeRancher2.exe");
+    /// Копия из библиотеки Steam (…\steamapps\common\…). Для других копий (например, D:\Games\…) «Играть» по умолчанию запускает exe.
+    public bool IsSteamCopy => GameDir.Replace('/', '\\').IndexOf(@"\steamapps\common\", StringComparison.OrdinalIgnoreCase) >= 0;
     public string UserDataDir => IOPath.Combine(GameDir, "UserData");
     public string PluginsDir => IOPath.Combine(GameDir, "Plugins");
     public string UserLibsDir => IOPath.Combine(GameDir, "UserLibs");
@@ -420,8 +422,11 @@ public sealed class ModStore
             }
         }
         catch { }
-        return ManagerConfig.CreateDefault();
+        return NewConfig();
     }
+
+    // конфиг по умолчанию; копия не из Steam — сразу запуск SlimeRancher2.exe напрямую
+    private ManagerConfig NewConfig() { var c = ManagerConfig.CreateDefault(); if (!IsSteamCopy) c.LaunchVia = "exe"; return c; }
 
     public void SaveConfig(ManagerConfig c)
     {
@@ -429,7 +434,7 @@ public sealed class ModStore
         WriteAtomic(ConfigPath, JsonSerializer.Serialize(c, Json));
     }
 
-    public void EnsureConfig() { if (!File.Exists(ConfigPath)) SaveConfig(ManagerConfig.CreateDefault()); }
+    public void EnsureConfig() { if (!File.Exists(ConfigPath)) SaveConfig(NewConfig()); }
 
     private static void WriteAtomic(string path, string text)
     {

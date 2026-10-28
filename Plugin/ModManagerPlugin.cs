@@ -10,7 +10,7 @@ using MelonLoader;
 using MelonLoader.Utils;
 using SR2ModManager.Core;
 
-[assembly: MelonInfo(typeof(SR2ModManager.Plugin.ModManagerPlugin), "SR2 Mod Manager", SR2ModManager.Plugin.ModManagerPlugin.Version, "Viktor")]
+[assembly: MelonInfo(typeof(SR2ModManager.Plugin.ModManagerPlugin), "SR2 Mod Manager", SR2ModManager.Plugin.ModManagerPlugin.Version, "slitvin12")]
 [assembly: MelonGame("MonomiPark", "SlimeRancher2")]
 [assembly: MelonPriority(-1000)]
 [assembly: System.Reflection.AssemblyVersion("1.1.0.0")]

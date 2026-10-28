@@ -12,10 +12,12 @@
   .\build.ps1 -Test                                  # собрать и прогнать тесты
   .\build.ps1 -Install                               # собрать, установить в папку игры, ярлык на рабочем столе
   .\build.ps1 -Install -GameDir 'E:\Games\Slime Rancher 2'
+  .\build.ps1 -Package                               # собрать установщик .\_build\SR2ModManager_Setup.exe
 #>
 param(
     [switch]$Install,
     [switch]$Test,
+    [switch]$Package,
     [string]$GameDir = '',
     [string]$Dotnet = ''
 )
@@ -105,6 +107,41 @@ if ($Test) {
     if ($GameDir -and (Test-Path -LiteralPath (Join-Path $GameDir 'Mods'))) { $testArgs += (Join-Path $GameDir 'Mods') }
     & $dotnetExe @testArgs
     if ($LASTEXITCODE -ne 0) { throw 'Тесты не прошли' }
+}
+
+if ($Package) {
+    # Установщик: обычное приложение .NET Framework 4 (есть в любой Windows 10/11), собирается штатным csc.exe.
+    # Внутри два лаунчера: компактный (для ПК с .NET 8+) и со встроенной средой .NET — какой ставить, решает установщик.
+    if (-not $refsOk) { throw 'Для установщика нужен плагин, а для него — папка игры с MelonLoader 0.6+: укажите -GameDir' }
+    Write-Host '[package] лаунчер со встроенной средой .NET' -ForegroundColor Cyan
+    Run (@('publish', "$PSScriptRoot\Launcher\SR2ModLauncher.csproj", '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true',
+           '-p:EnableCompressionInSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:IntermediateOutputPath=obj\sc\', '-p:OutputPath=bin\sc\',
+           '-o', "$stage\launcher-sc") + $common)
+    $pkg = Join-Path $stage 'package'
+    New-Item -ItemType Directory -Force $pkg | Out-Null
+    $ver = ([regex]'<Version>([^<]+)</Version>').Match((Get-Content "$PSScriptRoot\Launcher\SR2ModLauncher.csproj" -Raw)).Groups[1].Value
+    [IO.File]::WriteAllText("$pkg\version.txt", $ver, (New-Object Text.UTF8Encoding $false))
+    $payload = [ordered]@{
+        'SR2ModManager.dll'     = "$stage\plugin\SR2ModManager.dll"
+        'SR2ModLauncher.exe'    = "$stage\launcher\SR2ModLauncher.exe"
+        'SR2ModLauncher.sc.exe' = "$stage\launcher-sc\SR2ModLauncher.exe"
+        'uninstall.ps1'         = "$PSScriptRoot\uninstall.ps1"
+        'app.ico'               = "$PSScriptRoot\Launcher\app.ico"
+        'version.txt'           = "$pkg\version.txt"
+    }
+    $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
+    if (-not (Test-Path $csc)) { throw 'Не найден csc.exe из .NET Framework 4' }
+    $setup = Join-Path $stage 'SR2ModManager_Setup.exe'
+    Write-Host '[package] установщик SR2ModManager_Setup.exe' -ForegroundColor Cyan
+    $a = @('/nologo', '/target:winexe', '/optimize+', '/platform:anycpu', '/codepage:65001', "/out:$setup",
+           "/win32icon:$PSScriptRoot\Launcher\app.ico", "/win32manifest:$PSScriptRoot\Installer\app.manifest",
+           '/r:System.dll', '/r:System.Core.dll', '/r:System.Drawing.dll', '/r:System.Windows.Forms.dll', '/r:Microsoft.CSharp.dll')
+    foreach ($k in $payload.Keys) { $a += "/resource:$($payload[$k]),payload.$k" }
+    $a += "$PSScriptRoot\Installer\Setup.cs"
+    & $csc @a
+    if ($LASTEXITCODE -ne 0) { throw 'Установщик не собрался' }
+    Write-Host ('[package] {0} ({1:N1} МБ)' -f $setup, ((Get-Item $setup).Length / 1MB)) -ForegroundColor Green
 }
 
 if ($Install) {
