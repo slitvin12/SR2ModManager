@@ -48,6 +48,7 @@ internal sealed class DetailsView : Canvas
     {
         "Plugin" => "плагин MelonLoader",
         "Mod" => "мод MelonLoader",
+        "Expansion" => "расширение Starlight",
         _ => m.Readable ? ".NET-библиотека" : "неизвестный файл",
     };
 

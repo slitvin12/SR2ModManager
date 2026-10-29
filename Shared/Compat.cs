@@ -77,6 +77,10 @@ public sealed class ModManifest
     public string AssemblyName = "";
     public Version? AssemblyVersion;
     public bool IsMelon;
+    public bool IsExpansion;                      // расширение Starlight: без MelonInfo, загружается Starlight
+    public string MinStarlight = "";              // AssemblyMetadata("minimum_sce", …) — минимальная версия Starlight
+    public List<string> CompatibleWith = new();   // AssemblyMetadata("SR2ModManager.CompatibleWith", "SR2MP;Starlight") — автор проверил общие хуки
+    public bool CooperativeHooks;                 // AssemblyMetadata("SR2ModManager.HookPolicy", "cooperative") — префиксы с отменой не мешают чужим хукам
     public bool LegacyInfo;                       // MelonModInfo / MelonPluginInfo — MelonLoader 0.2–0.3
     public string MelonKind = "", MelonName = "", MelonVersion = "", MelonAuthor = "";
     public string TargetFramework = "";           // ".NETCoreApp,Version=v6.0"
@@ -255,7 +259,19 @@ public static class ManifestReader
         "MelonGameVersionAttribute", "MelonPlatformAttribute", "MelonPlatformDomainAttribute", "MelonProcessAttribute",
         "MelonAdditionalDependenciesAttribute", "MelonOptionalDependenciesAttribute", "MelonIncompatibleAssembliesAttribute",
         "MelonPriorityAttribute", "VerifyLoaderVersionAttribute", "TargetFrameworkAttribute", "HarmonyDontPatchAllAttribute",
+        "AssemblyMetadataAttribute",
     };
+
+    /// Ключ AssemblyMetadata: «этот мод проверен вместе с …» (Id, имя сборки или имя мода через «;»).
+    /// Общие хуки с перечисленными модами считаются согласованными, а не конфликтом.
+    public const string CompatibleWithKey = "SR2ModManager.CompatibleWith";
+
+    /// Ключ AssemblyMetadata: «мои хуки кооперативные» (значение «cooperative»). Автор обещает: префиксы
+    /// с отменой срабатывают только при включённой пользователем функции и выполняются последними,
+    /// без транспайлеров и финализаторов, исключения не уходят в чужую цепочку. Тогда сама отмена
+    /// оригинала не считается конфликтом: в HarmonyX чужие префиксы и постфиксы всё равно выполняются.
+    /// Чужие транспайлеры и чужие префиксы с отменой по-прежнему показываются как конфликт.
+    public const string HookPolicyKey = "SR2ModManager.HookPolicy";
 
     private static void ReadFrom(Stream s, ModManifest m)
     {
@@ -287,6 +303,8 @@ public static class ManifestReader
             }
             catch { /* одно кривое поле не должно ломать чтение */ }
         }
+
+        if (!m.IsMelon && StarlightInfo.IsExpansion(md)) m.IsExpansion = true;
 
         foreach (var th in md.TypeReferences)
         {
@@ -367,6 +385,18 @@ public static class ManifestReader
             case "HarmonyDontPatchAllAttribute":
                 m.DontPatchAll = true;
                 break;
+            case "AssemblyMetadataAttribute":
+            {
+                string key = a.Length > 0 ? Str(a[0]) : "", val = a.Length > 1 ? Str(a[1]) : "";
+                if (key == StarlightInfo.MinimumVersionKey) m.MinStarlight = val.Trim();
+                else if (key == CompatibleWithKey)
+                {
+                    foreach (var x in val.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        if (!m.CompatibleWith.Contains(x, StringComparer.OrdinalIgnoreCase)) m.CompatibleWith.Add(x);
+                }
+                else if (key == HookPolicyKey) m.CooperativeHooks = string.Equals(val.Trim(), "cooperative", StringComparison.OrdinalIgnoreCase);
+                break;
+            }
         }
     }
 
@@ -1419,12 +1449,58 @@ public static class CompatChecker
         {
             if (m.Available || !manifests.TryGetValue(m.Id, out var mf) || !mf.Readable) continue;
             var list = PerMod(m, mf, env, log, modNames);
+            if (mf.IsExpansion) list.AddRange(ExpansionIssues(m, mf, mods, isOn));
             if (list.Count > 0) rep.ByMod[m.Id] = list;
         }
         CrossMod(rep, mods, manifests, isOn);
         foreach (var l in rep.ByMod.Values) l.Sort((a, b) => b.Level.CompareTo(a.Level));
         rep.Took = sw.Elapsed;
         return rep;
+    }
+
+    /// Расширение Starlight: Starlight должен быть в Mods и не старше minimum_sce.
+    public static List<CompatIssue> ExpansionIssues(ModEntry m, ModManifest mf, IReadOnlyList<ModEntry> mods, Func<string, bool> isOn)
+    {
+        var l = new List<CompatIssue>();
+        var sl = mods.FirstOrDefault(x => !x.Available && (Eq(x.AssemblyName, StarlightInfo.AssemblyName) || Eq(x.Id, StarlightInfo.AssemblyName)));
+        if (sl == null)
+        {
+            l.Add(Issue(CompatLevel.Error, "starlight-missing", "нужен Starlight", "Нужен Starlight",
+                $"{m.DisplayName} — расширение Starlight: у него нет MelonInfo, его запускает мод Starlight. Без Starlight в папке Mods расширение не загрузится.",
+                "Установите Starlight" + (mf.MinStarlight.Length > 0 ? " " + mf.MinStarlight + " или новее" : "") + " (github.com/ThatFinn/Starlight)."));
+            return l;
+        }
+        if (mf.MinStarlight.Length > 0 && Version.TryParse(Pad3(mf.MinStarlight), out var want) && Version.TryParse(Pad3(sl.Version), out var have) && have < want)
+            l.Add(Issue(CompatLevel.Error, "starlight-older", "нужен Starlight " + mf.MinStarlight, "Нужен Starlight " + mf.MinStarlight + "+",
+                $"{m.DisplayName} требует Starlight {mf.MinStarlight} или новее (AssemblyMetadata minimum_sce), а установлен {sl.Version}. Starlight откажется запускать расширение.",
+                "Обновите Starlight."));
+        return l;
+    }
+
+    /// Кооперативный мод (SR2ModManager.HookPolicy) без своих транспайлеров/финализаторов: его префиксы с отменой
+    /// срабатывают только при включённой функции, идут последними и (HarmonyX) не мешают чужим префиксам и постфиксам.
+    public static bool Cooperative(ModManifest? f) => f != null && f.CooperativeHooks && !f.Hooks.Any(h => h.Kind is "Transpiler" or "Finalizer");
+
+    /// Хук, который может помешать чужим на том же методе: транспайлер или префикс с отменой некооперативного мода.
+    public static bool HardHook(ModManifest? owner, HookTarget h) => h.Kind == "Transpiler" || h.SkipsOriginal && !Cooperative(owner);
+
+    /// Мешают ли два мода друг другу хуками (без учёта зависимостей и CompatibleWith): на общем методе у кого-то
+    /// из них транспайлер или некооперативный префикс с отменой. Одно правило для проверки, «Проблем» и «Хуков».
+    public static bool HooksClash(ModManifest? fa, ModManifest? fb)
+    {
+        if (fa == null || fb == null) return false;
+        var byB = fb.Hooks.Where(h => !h.Dynamic).GroupBy(h => h.Key).ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+        foreach (var g in fa.Hooks.Where(h => !h.Dynamic).GroupBy(h => h.Key))
+            if (byB.TryGetValue(g.Key, out var hb) && (g.Any(h => HardHook(fa, h)) || hb.Any(h => HardHook(fb, h)))) return true;
+        return false;
+    }
+
+    /// Автор одного из модов указал в AssemblyMetadata(SR2ModManager.CompatibleWith), что проверил его вместе с другим.
+    public static bool Vouched(ModEntry a, ModManifest? fa, ModEntry b, ModManifest? fb)
+    {
+        static bool Lists(ModManifest? f, ModEntry o, ModManifest? fo) => f != null && f.CompatibleWith.Any(x =>
+            Eq(x, o.Id) || Eq(x, o.AssemblyName) || Eq(x, o.Name) || fo != null && (Eq(x, fo.AssemblyName) || Eq(x, fo.MelonName)));
+        return Lists(fa, b, fb) || Lists(fb, a, fa);
     }
 
     private static void Add(CompatReport rep, string id, CompatIssue i)
@@ -1453,7 +1529,7 @@ public static class CompatChecker
         var ls = log?.For(m.Id);
         bool cleanInLog = log != null && log.WasLoaded(m.Id) && (ls == null || ls.Errors == 0);
 
-        if (!mf.IsMelon)
+        if (!mf.IsMelon && !mf.IsExpansion)
         {
             l.Add(Issue(CompatLevel.Warning, "not-melon", "не мод", "Это библиотека, а не мод",
                 $"В {m.FileName} нет атрибута MelonInfo — это обычная .NET-библиотека. MelonLoader ищет библиотеки в UserLibs, а из Mods попробует загрузить её как мод и запишет ошибку в журнал.",
@@ -1566,11 +1642,12 @@ public static class CompatChecker
             {
                 if (where == "framework")
                 {
-                    if (!dotnetFlagged && env.DotNet != null && need.Major > env.DotNet.Major && need.Major < 100)
+                    int needNet = FrameworkNeeds(name, need, env.VersionOf(name), env.DotNet);
+                    if (!dotnetFlagged && env.DotNet != null && needNet > env.DotNet.Major)
                     {
                         dotnetFlagged = true;
-                        l.Add(Issue(CompatLevel.Error, "dotnet-newer", ".NET " + need.Major, "Нужен .NET " + need.Major,
-                            $"Мод ссылается на {name} {V3(need)}, а MelonLoader запускает моды на .NET {env.DotNet}. Сборка не загрузится.", "Нужна версия мода под net6.0."));
+                        l.Add(Issue(CompatLevel.Error, "dotnet-newer", ".NET " + needNet, "Нужен .NET " + needNet,
+                            $"Мод ссылается на {name} {V3(need)}, а в .NET {env.DotNet}, на котором MelonLoader запускает моды, — {V3(env.VersionOf(name) ?? env.DotNet)}. Сборка не загрузится.", "Нужна версия мода под net6.0."));
                     }
                     continue;
                 }
@@ -1624,6 +1701,18 @@ public static class CompatChecker
                 $"Мод хранит настройки в MelonPreferences, а файл UserData\\MelonPreferences.cfg не читается ({env.PrefsError}). MelonLoader сбросит их к стандартным.",
                 "Исправьте файл или удалите его, чтобы он создался заново."));
         return l;
+    }
+
+    /// Какой .NET нужен для ссылки на системную сборку. Номера версий не у всех сборок совпадают с .NET:
+    /// Microsoft.VisualBasic.Core в .NET 6 — 11.0.0.0, mscorlib/netstandard — 4.0/2.1. Поэтому сравниваем со сборкой,
+    /// которая реально лежит в рантайме, а по номеру .NET — только если такой сборки в рантайме нет. 0 — не важно.
+    public static int FrameworkNeeds(string name, Version need, Version? have, Version? dotnet)
+    {
+        if (dotnet == null || need.Major >= 100) return 0;
+        if (have != null)
+            return need.Major > have.Major ? dotnet.Major + (need.Major - have.Major) : 0;
+        if (name is "mscorlib" or "netstandard" or "WindowsBase" || name.StartsWith("Microsoft.VisualBasic", StringComparison.Ordinal)) return 0;
+        return need.Major > dotnet.Major ? need.Major : 0;
     }
 
     private static string Pad3(string v)
@@ -1701,20 +1790,45 @@ public static class CompatChecker
             }
             if (shared.Count == 0) continue;
             var others = shared.SelectMany(s => s.Theirs.Select(t => t.Mod)).Distinct().ToList();
-            bool related = others.All(o => Related(m, o));
-            bool risky = shared.Any(s => s.Theirs.Any(t => !Related(m, t.Mod) && (t.Hook.Kind == "Transpiler" || t.Hook.SkipsOriginal))
-                                      || s.Mine.Any(h => h.Kind == "Transpiler" || h.SkipsOriginal) && s.Theirs.Any(t => !Related(m, t.Mod)));
-            var lines = shared.Take(4).Select(s => s.Mine[0].Short + " — у " + string.Join(", ", s.Theirs.Select(t => t.Mod.DisplayName + " (" + t.Hook.KindText + ")").Distinct())).ToList();
-            string list = string.Join("; ", lines) + (shared.Count > 4 ? $"; и ещё {shared.Count - 4}" : "");
-            string names = string.Join(", ", others.Select(o => o.DisplayName));
-            var i = risky
-                ? Issue(CompatLevel.Warning, "hook-conflict", "конфликт хуков", "Конфликт хуков Harmony с " + names,
-                    $"Патчит те же методы игры, что и {names}: {list}. Префикс с отменой (возвращает false) или транспайлер одного мода может отменить или переписать изменения другого — что сработает, зависит от порядка патчей.",
-                    "Если что-то из этих модов перестало работать — выключите один из них и проверьте журнал MelonLoader.")
-                : Issue(CompatLevel.Info, "hook-shared", "общие хуки: " + shared.Count, "Общие хуки Harmony с " + names,
-                    $"Патчит те же методы игры, что и {names}: {list}. " + (related ? "Моды связаны зависимостью — скорее всего, так задумано." : "Оба мода только добавляют свой код до или после метода — обычно это безопасно."));
-            i.Related.AddRange(others.Select(o => o.Id));
-            Add(rep, m.Id, i);
+            var mf = mfs[m.Id];
+            bool Ok(ModEntry o) => Related(m, o) || Vouched(m, mf, o, mfs[o.Id]);
+            // Мешает только пара, где на общем методе транспайлер или некооперативный префикс с отменой (HooksClash),
+            // и моды не связаны зависимостью/CompatibleWith. Остальные общие хуки — отдельной инфо-строкой.
+            var clashing = others.Where(o => !Ok(o) && HooksClash(mf, mfs[o.Id])).ToList();
+            var calm = others.Where(o => !clashing.Contains(o)).ToList();
+            string Lines(List<ModEntry> group)
+            {
+                var sh = shared.Where(s => s.Theirs.Any(t => group.Contains(t.Mod))).ToList();
+                var ls = sh.Take(4).Select(s => s.Mine[0].Short + " — у " + string.Join(", ", s.Theirs.Where(t => group.Contains(t.Mod))
+                    .Select(t => t.Mod.DisplayName + " (" + t.Hook.KindText + ")").Distinct())).ToList();
+                return string.Join("; ", ls) + (sh.Count > 4 ? $"; и ещё {sh.Count - 4}" : "");
+            }
+            static string Names(List<ModEntry> group) => string.Join(", ", group.Select(o => o.DisplayName));
+            if (clashing.Count > 0)
+            {
+                string names = Names(clashing);
+                var w = Issue(CompatLevel.Warning, "hook-conflict", "конфликт хуков", "Конфликт хуков Harmony с " + names,
+                    $"Патчит те же методы игры, что и {names}: {Lines(clashing)}. Префикс с отменой (возвращает false) или транспайлер одного мода может отменить или переписать изменения другого — что сработает, зависит от порядка патчей.",
+                    "Если что-то из этих модов перестало работать — выключите один из них и проверьте журнал MelonLoader.");
+                w.Related.AddRange(clashing.Select(o => o.Id));
+                Add(rep, m.Id, w);
+            }
+            if (calm.Count > 0)
+            {
+                bool related = calm.All(o => Related(m, o));
+                bool vouched = !related && calm.All(Ok);
+                bool cooperative = shared.Any(s => s.Mine.Any(h => h.SkipsOriginal) && Cooperative(mf) && s.Theirs.Any(t => calm.Contains(t.Mod))
+                                                || s.Theirs.Any(t => calm.Contains(t.Mod) && t.Hook.SkipsOriginal && Cooperative(mfs[t.Mod.Id])));
+                string names = Names(calm);
+                int n = shared.Count(s => s.Theirs.Any(t => calm.Contains(t.Mod)));
+                var i = Issue(CompatLevel.Info, "hook-shared", "общие хуки: " + n, "Общие хуки Harmony с " + names,
+                    $"Патчит те же методы игры, что и {names}: {Lines(calm)}. " + (related ? "Моды связаны зависимостью — скорее всего, так задумано."
+                        : vouched ? "Автор мода проверил их вместе (SR2ModManager.CompatibleWith) — хуки согласованы и друг другу не мешают."
+                        : cooperative ? "Хуки с отменой объявлены кооперативными (SR2ModManager.HookPolicy): срабатывают только при включённой функции, выполняются последними и не мешают чужим префиксам и постфиксам."
+                        : "Оба мода только добавляют свой код до или после метода — обычно это безопасно."));
+                i.Related.AddRange(calm.Select(o => o.Id));
+                Add(rep, m.Id, i);
+            }
         }
     }
 
@@ -1732,10 +1846,12 @@ public static class CompatChecker
                   + (mf.Hooks.All(h => h.Manual) ? " (патчи в коде)" : ""));
         }
         else if (mf.UsesHarmony) f.Add(mf.ManualPatching ? "Harmony: патчи в коде" : "Harmony");
+        if (mf.CooperativeHooks) f.Add("кооперативные хуки");
         if (mf.UsesPreferences) f.Add("MelonPreferences");
         if (mf.Additional.Count > 0) f.Add("зависит: " + string.Join(", ", mf.Additional));
         if (mf.Optional.Count > 0) f.Add("необязательно: " + string.Join(", ", mf.Optional));
         if (mf.Priority != 0) f.Add("приоритет " + mf.Priority);
+        f.AddRange(KnownMods.Facts(KnownMods.Find(mf.MelonName, mf.AssemblyName)));
         return f;
     }
 

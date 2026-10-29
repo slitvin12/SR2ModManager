@@ -631,7 +631,8 @@ internal sealed partial class MainForm
     private bool HooksClash(ModEntry a, ModEntry b)
     {
         if (a.DependsOn.Contains(b.Id, StringComparer.OrdinalIgnoreCase) || b.DependsOn.Contains(a.Id, StringComparer.OrdinalIgnoreCase)) return false;
-        return SharedHooks(a, b).Any(s => s.A.Any(RiskyHook) || s.B.Any(RiskyHook));
+        if (CompatChecker.Vouched(a, ManifestOf(a), b, ManifestOf(b))) return false; // автор проверил их вместе
+        return CompatChecker.HooksClash(ManifestOf(a), ManifestOf(b)); // кооперативные отмены (HookPolicy) не мешают
     }
 
     /// «Оба патчат `Камера.LateUpdate` и ещё 2 метода: у A префикс с отменой».
@@ -726,7 +727,14 @@ internal sealed partial class MainForm
         }
         targets = groups.Count;
         bool Has(List<(ModEntry M, HookTarget H)> g, string id) => g.Any(x => x.M.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
-        bool Risky(List<(ModEntry M, HookTarget H)> g) => g.Any(x => x.H.SkipsOriginal || x.H.Kind == "Transpiler");
+        bool Vouch(ModEntry a, ModEntry b) => CompatChecker.Vouched(a, ManifestOf(a), b, ManifestOf(b));
+        // опасно, если префикс с отменой / транспайлер стоит рядом с модом, с которым автор совместимость не проверял
+        bool Risky(List<(ModEntry M, HookTarget H)> g) => g.Any(x => CompatChecker.HardHook(ManifestOf(x.M), x.H)
+            && g.Any(y => !y.M.Id.Equals(x.M.Id, StringComparison.OrdinalIgnoreCase) && !Vouch(x.M, y.M)));
+        bool Agreed(List<(ModEntry M, HookTarget H)> g) => !Risky(g) && g.Any(x => x.H.SkipsOriginal || x.H.Kind == "Transpiler");
+        // все «опасные на вид» хуки — кооперативные отмены (HookPolicy), а не проверка автора (CompatibleWith)
+        bool CoopOnly(List<(ModEntry M, HookTarget H)> g) => g.Where(x => x.H.SkipsOriginal || x.H.Kind == "Transpiler")
+            .All(x => x.H.Kind != "Transpiler" && CompatChecker.Cooperative(ManifestOf(x.M)));
         string Who(List<(ModEntry M, HookTarget H)> g) => string.Join("  ·  ", g.GroupBy(x => x.M.Id, StringComparer.OrdinalIgnoreCase)
             .Select(x => x.First().M.DisplayName + " — " + string.Join(", ", x.Select(y => y.H.KindText).Distinct())));
         string Tip(string key, List<(ModEntry M, HookTarget H)> g) => key.Replace("::", ".") + "\n" + string.Join("\n", g.Select(x =>
@@ -752,7 +760,9 @@ internal sealed partial class MainForm
                 Title = h0.Short, Text = Who(g), Right = Ns(h0),
                 Badge = isShared ? Theme.Count(n, "мод", "мода", "модов") : "", BadgeTone = bad ? Tone.Warn : Tone.Info,
                 Mark = sel != null && !onlySel && Has(g, sel), ModId = sel != null && Has(g, sel) ? sel : g[0].M.Id,
-                Tip = Tip(key, g) + (bad ? "\n\nПрефикс с отменой или транспайлер: моды могут мешать друг другу — порядок патчей зависит от приоритета (MelonPriority / HarmonyPriority)." : ""),
+                Tip = Tip(key, g) + (bad ? "\n\nПрефикс с отменой или транспайлер: моды могут мешать друг другу — порядок патчей зависит от приоритета (MelonPriority / HarmonyPriority)."
+                    : isShared && Agreed(g) ? (CoopOnly(g) ? "\n\nПрефиксы с отменой объявлены кооперативными (SR2ModManager.HookPolicy): срабатывают только при включённой функции и не мешают чужим хукам."
+                        : "\n\nАвтор мода проверил эти моды вместе (SR2ModManager.CompatibleWith): хуки согласованы.") : ""),
                 Copy = key.Replace("::", ".") + ": " + Who(g),
             };
         }

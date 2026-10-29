@@ -33,7 +33,7 @@ public sealed class ModEntry
     public string Version = "";
     public string Author = "";
     public string Description = "";
-    public string Kind = "";          // Mod / Plugin / "" (не мелон)
+    public string Kind = "";          // Mod / Plugin / Expansion (расширение Starlight) / "" (не мелон)
     public long Size;
     public DateTime Modified;
     public List<string> References = new();      // имена сборок, на которые ссылается DLL
@@ -201,6 +201,38 @@ public static class MapUtil
         var d = new Dictionary<string, V>(StringComparer.OrdinalIgnoreCase);
         foreach (var x in src) d[key(x)] = val(x);
         return d;
+    }
+}
+
+/// Расширения Starlight (SR2 Expansion): DLL без MelonInfo, класс с [StarlightLoadExpansion] / наследник StarlightExpansionV01.
+/// MelonLoader загружает такую сборку из Mods\ без мелонов, а Starlight находит в ней расширение и запускает его.
+public static class StarlightInfo
+{
+    public const string AssemblyName = "Starlight";
+    public const string MinimumVersionKey = "minimum_sce"; // Starlight.Expansion.StarlightModInfoAttributes.MinimumStarlightVersion
+
+    public static bool IsExpansion(MetadataReader md)
+    {
+        foreach (var th in md.TypeDefinitions)
+        {
+            var td = md.GetTypeDefinition(th);
+            if (td.BaseType.Kind == HandleKind.TypeReference)
+            {
+                var br = md.GetTypeReference((TypeReferenceHandle)td.BaseType);
+                if (md.StringComparer.Equals(br.Namespace, "Starlight.Expansion") && md.GetString(br.Name).StartsWith("StarlightExpansion", StringComparison.Ordinal))
+                    return true;
+            }
+            foreach (var ch in td.GetCustomAttributes())
+            {
+                var ca = md.GetCustomAttribute(ch);
+                if (ca.Constructor.Kind != HandleKind.MemberReference) continue;
+                var mr = md.GetMemberReference((MemberReferenceHandle)ca.Constructor);
+                if (mr.Parent.Kind == HandleKind.TypeReference
+                    && md.StringComparer.Equals(md.GetTypeReference((TypeReferenceHandle)mr.Parent).Name, "StarlightLoadExpansionAttribute"))
+                    return true;
+            }
+        }
+        return false;
     }
 }
 
@@ -728,7 +760,7 @@ public sealed class ModStore
             res.Errors.Add($"{file}: это не .NET-сборка — не похоже на мод MelonLoader");
             return;
         }
-        string root = forcedRoot ?? (e.Kind == "Plugin" ? "Plugins" : e.Kind == "Mod" ? "Mods" : "UserLibs");
+        string root = forcedRoot ?? (e.Kind == "Plugin" ? "Plugins" : e.Kind is "Mod" or "Expansion" ? "Mods" : "UserLibs");
         string label = string.IsNullOrWhiteSpace(e.Name) ? e.Id : e.Name;
         if (root == "Mods")
         {
@@ -1036,7 +1068,7 @@ public sealed class ModStore
             var asm = md.GetAssemblyDefinition();
             e.AssemblyName = md.GetString(asm.Name);
             e.Version = asm.Version.ToString();
-            string fileVer = null, melonType = null;
+            string fileVer = null, melonType = null, title = null, product = null, company = null;
             foreach (var h in asm.GetCustomAttributes())
             {
                 try
@@ -1067,6 +1099,12 @@ public sealed class ModStore
                         e.Description = ca.DecodeValue(new TypeProvider()).FixedArguments[0].Value as string ?? "";
                     else if (an == "AssemblyFileVersionAttribute")
                         fileVer = ca.DecodeValue(new TypeProvider()).FixedArguments[0].Value as string;
+                    else if (an == "AssemblyTitleAttribute")
+                        title = ca.DecodeValue(new TypeProvider()).FixedArguments[0].Value as string;
+                    else if (an == "AssemblyProductAttribute")
+                        product = ca.DecodeValue(new TypeProvider()).FixedArguments[0].Value as string;
+                    else if (an == "AssemblyCompanyAttribute")
+                        company = ca.DecodeValue(new TypeProvider()).FixedArguments[0].Value as string;
                     else if (an == "MelonAdditionalDependenciesAttribute")
                     {
                         var arr = ca.DecodeValue(new TypeProvider()).FixedArguments[0].Value as ImmutableArray<CustomAttributeTypedArgument<string>>?;
@@ -1079,6 +1117,16 @@ public sealed class ModStore
             foreach (var rh in md.AssemblyReferences)
                 e.References.Add(md.GetString(md.GetAssemblyReference(rh).Name));
             if (string.IsNullOrEmpty(e.Kind) && melonType != null) e.Kind = GuessKind(md, melonType);
+            if (melonType == null && StarlightInfo.IsExpansion(md))
+            {
+                // Расширение Starlight (например, Ranching Together / SR2MP): без MelonInfo, его загружает Starlight из Mods\.
+                e.Kind = "Expansion";
+                if (string.IsNullOrWhiteSpace(e.Name)) e.Name = !string.IsNullOrWhiteSpace(title) ? title : product ?? "";
+                if (string.IsNullOrWhiteSpace(e.Author)) e.Author = company ?? "";
+                if (!e.MelonDependencies.Contains(StarlightInfo.AssemblyName, StringComparer.OrdinalIgnoreCase))
+                    e.MelonDependencies.Add(StarlightInfo.AssemblyName);
+            }
+            if (string.IsNullOrWhiteSpace(e.Link) && KnownMods.Find(e.Name, e.AssemblyName) is { } km) e.Link = km.Url; // известный мод с Nexus
             e.Readable = true;
         }
     }

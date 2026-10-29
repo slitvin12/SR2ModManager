@@ -22,6 +22,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Shared\ModCore.cs" Link="ModCore.cs" />
+    <Compile Include="..\Shared\KnownMods.cs" Link="KnownMods.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="$(MelonRefs)MelonLoader.dll" Private="false" />

@@ -355,7 +355,7 @@ public static class CatalogScanner
         }
         return mods;
 
-        static bool Keep(ModEntry e) => e.Readable && e.Kind == "Mod" && IsForThisGame(e);
+        static bool Keep(ModEntry e) => e.Readable && e.Kind is ("Mod" or "Expansion") && IsForThisGame(e);
         static ModEntry Finish(ModEntry e, FileInfo f, string entry)
         {
             e.Available = true;
