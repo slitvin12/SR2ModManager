@@ -13,15 +13,15 @@ using SR2ModManager.Core;
 [assembly: MelonInfo(typeof(SR2ModManager.Plugin.ModManagerPlugin), "SR2 Mod Manager", SR2ModManager.Plugin.ModManagerPlugin.Version, "slitvin12")]
 [assembly: MelonGame("MonomiPark", "SlimeRancher2")]
 [assembly: MelonPriority(-1000)]
-[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.1.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.1.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.1.1.0")]
 [assembly: System.Reflection.AssemblyDescription("Менеджер модов: панель в игре (F5) и применение отложенных изменений до загрузки модов.")]
 
 namespace SR2ModManager.Plugin;
 
 public sealed class ModManagerPlugin : MelonPlugin
 {
-    public const string Version = "1.1.0";
+    public const string Version = "1.1.1";
     internal static ModManagerPlugin I { get; private set; }
     internal ModStore Store { get; private set; }
     internal string StartupReport = "";

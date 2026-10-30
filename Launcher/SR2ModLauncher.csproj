@@ -8,7 +8,7 @@
     <RollForward>LatestMajor</RollForward>
     <AssemblyName>SR2ModLauncher</AssemblyName>
     <RootNamespace>SR2ModManager.Launcher</RootNamespace>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <Product>SR2 Mod Manager</Product>
     <Description>Лаунчер модов Slime Rancher 2</Description>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

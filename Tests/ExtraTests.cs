@@ -106,7 +106,7 @@ static class ExtraTests
         if (ct == null || rd == null) { Console.WriteLine("  (нет CreatorToolkit/ReviewDirector — проверка на них пропущена)"); return; }
         var ctm = mfs[ct.Id];
         var rdm = mfs[rd.Id];
-        check(ctm.IsMelon && !ctm.LegacyInfo && ctm.MelonVersion.StartsWith("0.6."), $"CreatorToolkit: MelonInfo «{ctm.MelonName}» {ctm.MelonVersion}");
+        check(ctm.IsMelon && !ctm.LegacyInfo && System.Version.TryParse(ctm.MelonVersion, out var ctmVer) && ctmVer >= new System.Version(0, 6), $"CreatorToolkit: MelonInfo «{ctm.MelonName}» {ctm.MelonVersion}");
         check(rdm.IsMelon && !rdm.LegacyInfo && rdm.MelonVersion.StartsWith("3.0.0"), $"ReviewDirector: MelonInfo «{rdm.MelonName}» {rdm.MelonVersion}");
         check(ctm.LoaderRef != null && rdm.LoaderRef != null, $"версия MelonLoader, под которую собраны: CT {ctm.LoaderRef}, RD {rdm.LoaderRef}");
         check(ctm.FrameworkKind == "core" && rdm.FrameworkKind == "core", $"оба под .NET Core: {ctm.FrameworkLabel} / {rdm.FrameworkLabel}");
